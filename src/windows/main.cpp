@@ -291,20 +291,12 @@ static void pushDevices() {
 
 // ─── Playback ─────────────────────────────────────────────────────────────────
 
-static void setAlwaysOnTop(bool on) {
-    SetWindowPos(g_hwnd, on ? HWND_TOPMOST : HWND_NOTOPMOST,
-                 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-}
-
 static void startPlaying() {
     if (g_selected<0 || g_selected>=(int)g_filtered.size()) {
         jsCall(L"status", L"'Select a song from the library first.'"); return;
     }
     KillTimer(g_hwnd, TID_PROGRESS);
     std::string path = toUtf8(g_filtered[g_selected]->path);
-
-    // Pin on top so user can see progress while Roblox has focus
-    setAlwaysOnTop(true);
 
     g_player->playFile(path,
         [](char key, bool press){ press ? pressKey(key) : releaseKey(key); },
@@ -387,7 +379,6 @@ static void onMsg(const std::wstring& m) {
         g_player->stop();
         if (g_midiIn) { g_midiIn->closePort(); g_midiIn.reset(); }
         resetModifiers();
-        setAlwaysOnTop(false);
         jsCall(L"setPlaying", L"false");
         jsCall(L"progress",   L"0,0");
         jsCall(L"status",     L"'Stopped.'");
@@ -426,6 +417,14 @@ static void onMsg(const std::wstring& m) {
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+    case WM_MOUSEACTIVATE:
+        // While playing, don't steal focus from Roblox when the user clicks
+        // our controls — clicks still register (MA_NOACTIVATE passes the mouse
+        // message through), but Roblox stays as the foreground window so key
+        // injection keeps going to it.
+        if (g_player && g_player->isRunning()) return MA_NOACTIVATE;
+        break;
+
     case WM_SIZE:
         if (g_wvc) { RECT r; GetClientRect(hwnd,&r); g_wvc->put_Bounds(r); }
         break;
@@ -452,7 +451,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_USER+1: { auto* s=(std::wstring*)lp; jsCall(L"status",L"'"+jsEsc(*s)+L"'"); delete s; break; }
     case WM_USER+2:
         KillTimer(hwnd,TID_PROGRESS);
-        setAlwaysOnTop(false);
         jsCall(L"setPlaying",L"false");
         jsCall(L"progress",L"0,0");
         jsCall(L"status",L"'Done!'");
@@ -484,7 +482,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     wc.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);
     RegisterClassW(&wc);
 
-    g_hwnd = CreateWindowExW(0, L"SnuffianoWnd", L"Snuffiano",
+    g_hwnd = CreateWindowExW(WS_EX_TOPMOST, L"SnuffianoWnd", L"Snuffiano",
         WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,
         CW_USEDEFAULT,CW_USEDEFAULT,462,648,
         nullptr,nullptr,hInst,nullptr);
