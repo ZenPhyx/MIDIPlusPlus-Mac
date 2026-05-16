@@ -10,20 +10,29 @@ static UINT __fastcall FallbackSendInput(ULONG n, LPINPUT p, int sz) {
 UINT(__fastcall* NtUserSendInputCall)(ULONG, LPINPUT, int) = FallbackSendInput;
 
 unsigned long GetNtUserSendInputSyscallNumber(void) {
-    HMODULE mod = GetModuleHandleW(L"win32u.dll");
-    if (!mod) mod = LoadLibraryW(L"win32u.dll");
-    if (!mod) throw std::runtime_error("win32u.dll not available");
+    // Search win32u.dll first, then user32.dll, then ntdll.dll (same order as MIDI++)
+    static const char* const DLLS[] = { "win32u.dll", "user32.dll", "ntdll.dll" };
+    FARPROC pFunc = nullptr;
+    for (auto dll : DLLS) {
+        HMODULE mod = GetModuleHandleA(dll);
+        if (!mod) continue;
+        pFunc = GetProcAddress(mod, "NtUserSendInput");
+        if (pFunc) break;
+    }
+    if (!pFunc)
+        throw std::runtime_error("NtUserSendInput not found in win32u/user32/ntdll");
 
-    FARPROC fn = GetProcAddress(mod, "NtUserSendInput");
-    if (!fn) throw std::runtime_error("NtUserSendInput not exported");
-
-    // Stub starts with: B8 xx xx xx xx  (mov eax, syscall_number)
-    const uint8_t* stub = reinterpret_cast<const uint8_t*>(fn);
-    if (stub[0] != 0xB8)
-        throw std::runtime_error("Unexpected stub — syscall extraction aborted");
+    // win32u.dll stub layout (standard on Windows 10/11):
+    //   4C 8B D1        mov r10, rcx
+    //   B8 xx xx xx xx  mov eax, <syscall_number>   ← number is at offset 4
+    //   0F 05           syscall
+    //   C3              ret
+    const BYTE* p = reinterpret_cast<const BYTE*>(pFunc);
+    if (p[0] != 0x4C || p[1] != 0x8B || p[2] != 0xD1)
+        throw std::runtime_error("Unexpected NtUserSendInput stub — not a standard NT syscall stub");
 
     DWORD num;
-    std::memcpy(&num, stub + 1, sizeof(DWORD));
+    std::memcpy(&num, p + 4, sizeof(DWORD));
     return num;
 }
 
@@ -34,25 +43,24 @@ void InitializeNtUserSendInputCall(void) {
 
     g_NtSyscallNumber = num;
 
-    // Trampoline: mov r10,rcx | mov eax,N | syscall | ret
-    // r10=rcx is required by the NT calling convention on x64.
-    static const size_t SZ = 12;
-    static uint8_t tramp[SZ] = {
-        0x4C, 0x8B, 0xD1,               // mov r10, rcx
-        0xB8, 0x00, 0x00, 0x00, 0x00,  // mov eax, <num>
-        0x0F, 0x05,                      // syscall
-        0xC3,                            // ret
-        0x90,                            // nop (alignment)
-    };
-    std::memcpy(&tramp[4], &num, sizeof(DWORD));
+    // Build the same 11-byte trampoline as MIDI++:
+    //   4C 8B D1        mov r10, rcx   (NT calling convention)
+    //   B8 xx xx xx xx  mov eax, N
+    //   0F 05           syscall
+    //   C3              ret
+    void* mem = VirtualAlloc(nullptr, 16, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!mem) return;
 
-    void* mem = VirtualAlloc(nullptr, SZ, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!mem) return;  // stay on fallback
-    std::memcpy(mem, tramp, SZ);
+    BYTE* code = static_cast<BYTE*>(mem);
+    code[0] = 0x4C; code[1] = 0x8B; code[2] = 0xD1;   // mov r10, rcx
+    code[3] = 0xB8;                                      // mov eax, ...
+    std::memcpy(&code[4], &num, sizeof(DWORD));          // ...syscall number
+    code[8] = 0x0F; code[9] = 0x05;                     // syscall
+    code[10] = 0xC3;                                     // ret
 
     DWORD old;
-    VirtualProtect(mem, SZ, PAGE_EXECUTE_READ, &old);
-    FlushInstructionCache(GetCurrentProcess(), mem, SZ);
+    VirtualProtect(mem, 16, PAGE_EXECUTE_READ, &old);
+    FlushInstructionCache(GetCurrentProcess(), mem, 16);
 
     NtUserSendInputCall = reinterpret_cast<UINT(__fastcall*)(ULONG, LPINPUT, int)>(mem);
 }
