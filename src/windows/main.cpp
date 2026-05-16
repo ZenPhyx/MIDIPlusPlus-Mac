@@ -164,6 +164,7 @@ updSliders();send({a:'init'});
 // ─── Globals ──────────────────────────────────────────────────────────────────
 
 static HWND g_hwnd;
+static HWND g_prevFocus = nullptr;  // window that had focus before user clicked us
 static ComPtr<ICoreWebView2Controller> g_wvc;
 static ComPtr<ICoreWebView2>           g_wv;
 
@@ -370,11 +371,8 @@ static void onMsg(const std::wstring& m) {
         if (g_player->isRunning()) {
             if (g_player->isPaused()) { g_player->resume(); jsCall(L"setPlaying",L"true"); }
             else                      { g_player->pause();  jsCall(L"setPlaying",L"false"); }
-        } else startPlaying();
-        return;
-    }
-
-    if (has(L"\"stop\"")) {
+        } else { startPlaying(); }
+    } else if (has(L"\"stop\"")) {
         KillTimer(g_hwnd, TID_PROGRESS); KillTimer(g_hwnd, TID_MIDI);
         g_player->stop();
         if (g_midiIn) { g_midiIn->closePort(); g_midiIn.reset(); }
@@ -382,21 +380,18 @@ static void onMsg(const std::wstring& m) {
         jsCall(L"setPlaying", L"false");
         jsCall(L"progress",   L"0,0");
         jsCall(L"status",     L"'Stopped.'");
-        return;
-    }
-
-    if (has(L"\"restart\"")) {
-        if (g_player->isRunning()) g_player->seek(0.0); else startPlaying(); return;
-    }
-    if (has(L"\"rewind\""))  { g_player->seek(std::max(0.0, g_player->getPosition()-10.0)); return; }
-    if (has(L"\"forward\"")) {
+    } else if (has(L"\"restart\"")) {
+        if (g_player->isRunning()) g_player->seek(0.0); else startPlaying();
+    } else if (has(L"\"rewind\"")) {
+        g_player->seek(std::max(0.0, g_player->getPosition()-10.0));
+    } else if (has(L"\"forward\"")) {
         double dur=g_player->getDuration(), pos=g_player->getPosition();
-        g_player->seek(std::min(pos+10.0, dur>0?dur-0.1:pos+10.0)); return;
-    }
-    if (has(L"\"seek\""))  { double dur=g_player->getDuration(); if(dur>0) g_player->seek(numv(L"\"v\"")*dur); return; }
-    if (has(L"\"speed\"")) { g_player->setSpeed(numv(L"\"v\"")); return; }
-
-    if (has(L"\"live\"")) {
+        g_player->seek(std::min(pos+10.0, dur>0?dur-0.1:pos+10.0));
+    } else if (has(L"\"seek\"")) {
+        double dur=g_player->getDuration(); if(dur>0) g_player->seek(numv(L"\"v\"")*dur);
+    } else if (has(L"\"speed\"")) {
+        g_player->setSpeed(numv(L"\"v\""));
+    } else if (has(L"\"live\"")) {
         int idx = (int)numv(L"\"i\"");
         if (idx<0 || idx>=(int)g_deviceNames.size()) { jsCall(L"status",L"'No MIDI device selected.'"); return; }
         try {
@@ -409,20 +404,25 @@ static void onMsg(const std::wstring& m) {
         }
         jsCall(L"status", L"'Live — play your keyboard!'");
         SetTimer(g_hwnd, TID_MIDI, 8, nullptr);
+    } else {
         return;
     }
+
+    // After any playback control action, return focus to the game window so
+    // key injection keeps going to Roblox. We can call SetForegroundWindow here
+    // because we ARE currently the foreground process (the user just clicked us).
+    if (g_prevFocus && IsWindow(g_prevFocus))
+        SetForegroundWindow(g_prevFocus);
 }
 
 // ─── WndProc ──────────────────────────────────────────────────────────────────
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
-    case WM_MOUSEACTIVATE:
-        // While playing, don't steal focus from Roblox when the user clicks
-        // our controls — clicks still register (MA_NOACTIVATE passes the mouse
-        // message through), but Roblox stays as the foreground window so key
-        // injection keeps going to it.
-        if (g_player && g_player->isRunning()) return MA_NOACTIVATE;
+    case WM_ACTIVATE:
+        // Record which window we're stealing focus FROM so we can give it back.
+        if (LOWORD(wp) != WA_INACTIVE && lp)
+            g_prevFocus = reinterpret_cast<HWND>(lp);
         break;
 
     case WM_SIZE:
