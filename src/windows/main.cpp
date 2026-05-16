@@ -449,6 +449,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 // ─── WinMain ──────────────────────────────────────────────────────────────────
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
+    // WebView2 uses COM — must be initialized before CreateCoreWebView2EnvironmentWithOptions
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
     g_player = std::make_unique<MIDIPlayer>();
     loadLib();
 
@@ -470,9 +473,18 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     MultiByteToWideChar(CP_UTF8,0,HTML_UI,-1,html.data(),n);
     if (!html.empty()&&html.back()==0) html.pop_back();
 
-    CreateCoreWebView2EnvironmentWithOptions(nullptr,nullptr,nullptr,
+    HRESULT wv2hr = CreateCoreWebView2EnvironmentWithOptions(nullptr,nullptr,nullptr,
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-        [html](HRESULT, ICoreWebView2Environment* env) -> HRESULT {
+        [html](HRESULT hr, ICoreWebView2Environment* env) -> HRESULT {
+            if (FAILED(hr) || !env) {
+                MessageBoxW(g_hwnd,
+                    L"WebView2 runtime not found.\n\n"
+                    L"Please install Microsoft Edge (Chromium) or the WebView2 Runtime:\n"
+                    L"https://developer.microsoft.com/microsoft-edge/webview2/",
+                    L"Snuffiano — Missing Component", MB_ICONERROR|MB_OK);
+                PostQuitMessage(1);
+                return hr;
+            }
             env->CreateCoreWebView2Controller(g_hwnd,
                 Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
                 [html](HRESULT, ICoreWebView2Controller* ctrl) -> HRESULT {
@@ -501,12 +513,21 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             return S_OK;
         }).Get());
 
-    ShowWindow(g_hwnd,SW_SHOWNORMAL);
+    if (FAILED(wv2hr)) {
+        MessageBoxW(nullptr,
+            L"Failed to start WebView2.\n\nMake sure Microsoft Edge is installed.",
+            L"Snuffiano", MB_ICONERROR|MB_OK);
+        return 1;
+    }
+
+    ShowWindow(g_hwnd, SW_SHOWNORMAL);
     UpdateWindow(g_hwnd);
 
     MSG msg;
-    while (GetMessageW(&msg,nullptr,0,0)) {
-        TranslateMessage(&msg); DispatchMessageW(&msg);
+    while (GetMessageW(&msg, nullptr, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
     }
+    CoUninitialize();
     return 0;
 }
