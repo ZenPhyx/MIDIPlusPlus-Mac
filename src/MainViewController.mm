@@ -1,5 +1,4 @@
 #import "MainViewController.h"
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include "MIDIPlayer.hpp"
 #include "MacInputInjector.hpp"
 #include "RtMidi.h"
@@ -95,12 +94,7 @@
     panel.message              = @"Choose a MIDI file";
     panel.allowsMultipleSelection = NO;
     panel.canChooseDirectories = NO;
-    if (@available(macOS 12.0, *)) {
-        panel.allowedContentTypes = @[UTTypeData]; // parser will reject non-MIDI
-    } else {
-        panel.allowedFileTypes = @[@"mid", @"midi"];
-    }
-    panel.allowsOtherFileTypes = YES;
+    // No file type filter — the MIDI parser rejects non-MIDI files with a clear error
     if ([panel runModal] == NSModalResponseOK && self.onFileSelected)
         self.onFileSelected(panel.URL.path);
 }
