@@ -149,10 +149,11 @@ function onSpd(v){const sp=0.25+v/100*1.75;document.getElementById('sv').textCon
 function fmt(s){const t=Math.floor(s);return Math.floor(t/60)+':'+(''+(t%60)).padStart(2,'0');}
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function selRow(i){document.querySelectorAll('.li').forEach((e,j)=>e.className='li'+(j===i?' sel':''));sel=i;send({a:'select',i:i});}
+function playRow(i){selRow(i);send({a:'play_index',i:i});}
 window.snuf={
   progress(pos,dur){gdur=dur;const f=dur>0?pos/dur:0;const pb=document.getElementById('pb');pb.value=Math.round(f*1000);updPb(pb);document.getElementById('el').textContent=fmt(pos);document.getElementById('tot').textContent=fmt(dur);},
   status(m){document.getElementById('st').textContent=m;},
-  setLibrary(items){sel=-1;const lib=document.getElementById('lib');const cnt=document.getElementById('cnt');cnt.textContent=items.length+(items.length===1?' song':' songs');if(!items.length){lib.innerHTML='<div class="lib-empty">Library is empty &mdash; browse a MIDI file to add it</div>';return;}lib.innerHTML=items.map((it,i)=>`<div class="li" onclick="selRow(${i})"><span class="li-n">${i+1}</span><span class="li-ic">&#x1F3B5;</span><span class="li-nm">${esc(it.name)}</span><span class="li-d">${it.dur}</span><span class="li-x" onclick="event.stopPropagation();send({a:'delete',i:${i}})">&#x2715;</span></div>`).join('');},
+  setLibrary(items){sel=-1;const lib=document.getElementById('lib');const cnt=document.getElementById('cnt');cnt.textContent=items.length+(items.length===1?' song':' songs');if(!items.length){lib.innerHTML='<div class="lib-empty">Library is empty &mdash; browse a MIDI file to add it</div>';return;}lib.innerHTML=items.map((it,i)=>`<div class="li" onclick="selRow(${i})" ondblclick="playRow(${i})"><span class="li-n">${i+1}</span><span class="li-ic">&#x1F3B5;</span><span class="li-nm">${esc(it.name)}</span><span class="li-d">${it.dur}</span><span class="li-x" onclick="event.stopPropagation();send({a:'delete',i:${i}})">&#x2715;</span></div>`).join('');},
   setDevices(d){document.getElementById('devs').innerHTML=d.map(x=>`<option>${esc(x)}</option>`).join('');},
   setPlaying(p){document.getElementById('ppb').innerHTML=p?'&#x23F8;':'&#x25B6;';},
 };
@@ -353,6 +354,13 @@ static void onMsg(const std::wstring& m) {
     }
 
     if (has(L"\"select\"")) { g_selected = (int)numv(L"\"i\""); return; }
+
+    if (has(L"\"play_index\"")) {
+        g_selected = (int)numv(L"\"i\"");
+        g_player->stop();
+        startPlaying();
+        return;
+    }
 
     if (has(L"\"delete\"")) {
         int i = (int)numv(L"\"i\"");
