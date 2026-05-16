@@ -144,7 +144,9 @@ static NSButton* makeButton(NSString* title, NSColor* color, id target, SEL acti
 // ─── MainViewController ───────────────────────────────────────────────────────
 
 @interface MainViewController () {
-    std::unique_ptr<MIDIPlayer> _player;
+    std::unique_ptr<MIDIPlayer>  _player;
+    std::unique_ptr<RtMidiIn>    _midiInput;
+    std::vector<unsigned char>   _midiMsg;
 }
 @property (strong) DropZoneView* dropZone;
 @property (strong) NSPopUpButton* devicePicker;
@@ -153,6 +155,7 @@ static NSButton* makeButton(NSString* title, NSColor* color, id target, SEL acti
 @property (strong) NSButton* stopBtn;
 @property (strong) NSButton* refreshBtn;
 @property (strong) NSTextField* statusLabel;
+@property (strong) NSTimer* pollTimer;
 @end
 
 @implementation MainViewController
@@ -324,27 +327,56 @@ static NSButton* makeButton(NSString* title, NSColor* color, id target, SEL acti
         [self setStatus:@"No MIDI device selected."];
         return;
     }
+    try {
+        _midiInput = std::make_unique<RtMidiIn>();
+        _midiInput->openPort((unsigned int)idx);
+        _midiInput->ignoreTypes(true, true, true);
+    } catch (const std::exception& e) {
+        [self setStatus:[NSString stringWithFormat:@"Error: %s", e.what()]];
+        _midiInput.reset();
+        return;
+    }
+
     [self setPlayingState:YES];
+    [self countdownFrom:3];
+}
 
-    __weak typeof(self) weak = self;
+- (void)countdownFrom:(NSInteger)n {
+    if (n > 0) {
+        [self setStatus:[NSString stringWithFormat:@"Starting in %ld...", (long)n]];
+        __weak typeof(self) weak = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC),
+                       dispatch_get_main_queue(), ^{ [weak countdownFrom:n - 1]; });
+    } else {
+        [self setStatus:@"Live \xe2\x80\x94 play your keyboard!"];
+        self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:0.008
+                                                         target:self
+                                                       selector:@selector(pollMIDI:)
+                                                       userInfo:nil
+                                                        repeats:YES];
+    }
+}
 
-    _player->startLive((unsigned int)idx,
-        [](char key)                    { tapKey(key); },
-        [weak](const std::string& msg)  {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [weak setStatus:@(msg.c_str())];
-            });
-        },
-        [weak]() {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [weak setPlayingState:NO];
-            });
-        }
-    );
+- (void)pollMIDI:(NSTimer*)timer {
+    if (!_midiInput) return;
+    _midiInput->getMessage(&_midiMsg);
+    if (_midiMsg.size() >= 3 && (_midiMsg[0] & 0xF0) == 0x90 && _midiMsg[2] > 0) {
+        auto key = RobloxKeyMapper::map(static_cast<int>(_midiMsg[1]));
+        if (key) tapKey(*key);
+    }
 }
 
 - (void)stopPlayback:(id)sender {
+    // Stop file playback
     _player->stop();
+    // Stop live mode
+    [self.pollTimer invalidate];
+    self.pollTimer = nil;
+    if (_midiInput) {
+        _midiInput->closePort();
+        _midiInput.reset();
+    }
+    [self setPlayingState:NO];
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────

@@ -17,11 +17,6 @@ public:
                   StatusCallback onStatus,
                   DoneCallback   onDone);
 
-    void startLive(unsigned int   portIndex,
-                   KeyCallback    onKey,
-                   StatusCallback onStatus,
-                   DoneCallback   onDone);
-
     void stop();
     bool isRunning() const { return m_running.load(); }
 
