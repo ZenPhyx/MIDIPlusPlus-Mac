@@ -6,6 +6,8 @@
 #include <cstring>
 #include <climits>
 #include <fstream>
+#include <cerrno>
+#include <cstring>
 
 constexpr uint32_t MAX_EVENT_LENGTH = 0x100000;
 
@@ -111,7 +113,7 @@ MidiFile MidiParser::parse(const std::string& filename) {
 
     file.open(filename, std::ios::binary);
     if (!file.is_open())
-        throw std::runtime_error("Cannot open file: " + filename);
+        throw std::runtime_error("Cannot open file: " + filename + " (" + std::strerror(errno) + ")");
 
     MidiFile midiFile;
     char headerChunk[4];
