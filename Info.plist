@@ -3,11 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>RobloxPiano</string>
+    <string>Snuffiano</string>
     <key>CFBundleIdentifier</key>
-    <string>com.zenphyx.robloxpiano</string>
+    <string>com.zenphyx.snuffiano</string>
+    <key>CFBundleDisplayName</key>
+    <string>Snuffiano</string>
     <key>CFBundleName</key>
-    <string>Roblox Piano</string>
+    <string>Snuffiano</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

@@ -2,6 +2,7 @@
 #include <ApplicationServices/ApplicationServices.h>
 #include <unordered_map>
 
+// Hardware keycodes for unshifted keys (letters and digits).
 static const std::unordered_map<char, CGKeyCode> BASE_KEY_MAP = {
     {'a', 0},  {'s', 1},  {'d', 2},  {'f', 3},  {'h', 4},  {'g', 5},
     {'z', 6},  {'x', 7},  {'c', 8},  {'v', 9},  {'b', 11},
@@ -13,61 +14,48 @@ static const std::unordered_map<char, CGKeyCode> BASE_KEY_MAP = {
     {'6', 22}, {'7', 26}, {'8', 28}, {'9', 25}, {'0', 29},
 };
 
-static const std::unordered_map<char, CGKeyCode> SHIFT_KEY_MAP = {
-    {'!', 18}, {'@', 19}, {'$', 21}, {'%', 23},
-    {'^', 22}, {'*', 28}, {'(', 25},
+// Each shifted piano key gets its own phantom keycode (200+, not on any real Mac
+// keyboard).  The key character is injected via CGEventKeyboardSetUnicodeString so
+// Roblox sees the correct character while the kernel treats it as a completely
+// separate key — allowing e.g. 'd' (keycode 2) and 'D' (keycode 209) to be held
+// simultaneously without any conflict.
+static const std::unordered_map<char, CGKeyCode> PHANTOM_KEY_MAP = {
+    {'Q', 200}, {'W', 201}, {'E', 202}, {'T', 203}, {'Y', 204},
+    {'I', 205}, {'O', 206}, {'P', 207},
+    {'S', 208}, {'D', 209}, {'G', 210}, {'H', 211}, {'J', 212}, {'L', 213},
+    {'Z', 214}, {'C', 215}, {'V', 216}, {'B', 217},
+    {'!', 218}, {'@', 219}, {'$', 220}, {'%', 221}, {'^', 222}, {'*', 223}, {'(', 224},
 };
 
-static constexpr CGKeyCode SHIFT_KEY = 56;
-
-static bool resolveKey(char key, CGKeyCode& outCode, bool& outShift) {
-    if (key >= 'A' && key <= 'Z') {
-        auto it = BASE_KEY_MAP.find(static_cast<char>(key - 'A' + 'a'));
-        if (it == BASE_KEY_MAP.end()) return false;
-        outCode = it->second; outShift = true; return true;
-    }
-    auto sit = SHIFT_KEY_MAP.find(key);
-    if (sit != SHIFT_KEY_MAP.end()) {
-        outCode = sit->second; outShift = true; return true;
-    }
-    auto bit = BASE_KEY_MAP.find(key);
-    if (bit == BASE_KEY_MAP.end()) return false;
-    outCode = bit->second; outShift = false; return true;
+static void postBase(CGKeyCode code, bool down) {
+    CGEventRef e = CGEventCreateKeyboardEvent(nullptr, code, down);
+    CGEventPost(kCGSessionEventTap, e);
+    CFRelease(e);
 }
 
-static void post(CGKeyCode code, bool down, CGEventFlags flags = 0) {
+// Posts a phantom key event whose keycode doesn't exist on real hardware.
+// The unicode string tells the receiving app what character it represents.
+static void postPhantom(char c, CGKeyCode code, bool down) {
+    UniChar uc = static_cast<UniChar>(static_cast<unsigned char>(c));
     CGEventRef e = CGEventCreateKeyboardEvent(nullptr, code, down);
-    CGEventSetFlags(e, flags);
+    CGEventKeyboardSetUnicodeString(e, 1, &uc);
     CGEventPost(kCGSessionEventTap, e);
     CFRelease(e);
 }
 
 void pressKey(char key) {
-    CGKeyCode code; bool shift;
-    if (!resolveKey(key, code, shift)) return;
-    if (shift) {
-        // Hold shift only long enough to register the key-down, then release it.
-        // The key itself stays held — Roblox sustains the note until key-up arrives.
-        post(SHIFT_KEY, true,  kCGEventFlagMaskShift);
-        post(code,      true,  kCGEventFlagMaskShift);
-        post(SHIFT_KEY, false, 0);
-    } else {
-        post(code, true, 0);
-    }
+    auto pit = PHANTOM_KEY_MAP.find(key);
+    if (pit != PHANTOM_KEY_MAP.end()) { postPhantom(key, pit->second, true); return; }
+    auto bit = BASE_KEY_MAP.find(key);
+    if (bit != BASE_KEY_MAP.end()) postBase(bit->second, true);
 }
 
 void releaseKey(char key) {
-    CGKeyCode code; bool shift;
-    if (!resolveKey(key, code, shift)) return;
-    post(code, false, 0); // shift is already released, just send key-up
+    auto pit = PHANTOM_KEY_MAP.find(key);
+    if (pit != PHANTOM_KEY_MAP.end()) { postPhantom(key, pit->second, false); return; }
+    auto bit = BASE_KEY_MAP.find(key);
+    if (bit != BASE_KEY_MAP.end()) postBase(bit->second, false);
 }
 
-void tapKey(char key) {
-    pressKey(key);
-    releaseKey(key);
-}
-
-void resetModifiers() {
-    // Shift is never held between press and release, so nothing to reset.
-    post(SHIFT_KEY, false, 0); // safety: force shift up in case anything got stuck
-}
+void tapKey(char key) { pressKey(key); releaseKey(key); }
+void resetModifiers() {}  // no real modifiers held — no-op

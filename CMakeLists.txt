@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(RobloxPiano)
+project(Snuffiano)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,14 +22,14 @@ if(APP_ICON AND EXISTS "${CMAKE_SOURCE_DIR}/assets/AppIcon.icns")
         MACOSX_PACKAGE_LOCATION Resources)
 endif()
 
-add_executable(RobloxPiano MACOSX_BUNDLE ${SOURCES})
+add_executable(Snuffiano MACOSX_BUNDLE ${SOURCES})
 
-set_target_properties(RobloxPiano PROPERTIES
+set_target_properties(Snuffiano PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/Info.plist"
     MACOSX_BUNDLE_ICON_FILE  "AppIcon"
 )
 
-target_include_directories(RobloxPiano PRIVATE include)
+target_include_directories(Snuffiano PRIVATE include)
 
 # Enable ARC for Objective-C++ UI files
 set_source_files_properties(
@@ -39,9 +39,9 @@ set_source_files_properties(
     PROPERTIES COMPILE_FLAGS "-fobjc-arc"
 )
 
-target_compile_definitions(RobloxPiano PRIVATE __MACOSX_CORE__)
+target_compile_definitions(Snuffiano PRIVATE __MACOSX_CORE__)
 
-target_link_libraries(RobloxPiano
+target_link_libraries(Snuffiano
     "-framework Cocoa"
     "-framework CoreMIDI"
     "-framework CoreAudio"

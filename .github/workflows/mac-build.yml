@@ -46,16 +46,16 @@ jobs:
 
       - name: Package
         run: |
-          codesign --force --deep --sign - build/RobloxPiano.app
+          codesign --force --deep --sign - build/Snuffiano.app
           cd build
-          zip -r RobloxPiano.zip RobloxPiano.app
+          zip -r Snuffiano.zip Snuffiano.app
 
       - name: Publish latest release
         run: |
           gh release delete latest --cleanup-tag --yes 2>/dev/null || true
-          gh release create latest build/RobloxPiano.zip \
-            --title "Roblox Piano (macOS)" \
-            --notes "Double-click RobloxPiano.app to open. First launch: right-click → Open to bypass Gatekeeper. Then add Terminal to Accessibility in System Settings → Privacy & Security." \
+          gh release create latest build/Snuffiano.zip \
+            --title "Snuffiano (macOS)" \
+            --notes "Double-click Snuffiano.app to open. First launch: right-click → Open to bypass Gatekeeper. Then add Terminal to Accessibility in System Settings → Privacy & Security." \
             --latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -2,7 +2,6 @@
 #include "midi_parser.h"
 #include "RobloxKeyMapper.hpp"
 #include "MacInputInjector.hpp"
-#include "RtMidi.h"
 
 #include <algorithm>
 #include <chrono>
@@ -29,8 +28,7 @@ static int64_t tickToUs(uint32_t tick, uint16_t division,
 
 struct TimedNote { int64_t us; char key; bool press; };
 
-static std::vector<TimedNote> buildTimeline(const MidiFile& midi, int transposeAmount) {
-    // Collect note-on and note-off events
+static std::vector<TimedNote> buildTimeline(const MidiFile& midi, int transpose) {
     struct RawEvent { uint32_t tick; int note; bool press; };
     std::vector<RawEvent> raw;
     int lo = 127, hi = 0;
@@ -40,41 +38,81 @@ static std::vector<TimedNote> buildTimeline(const MidiFile& midi, int transposeA
             uint8_t type = ev.status & 0xF0;
             bool isOn  = (type == 0x90 && ev.data2 > 0);
             bool isOff = (type == 0x80) || (type == 0x90 && ev.data2 == 0);
-            if (isOn) {
-                raw.push_back({ev.absoluteTick, ev.data1, true});
-                lo = std::min(lo, (int)ev.data1);
-                hi = std::max(hi, (int)ev.data1);
-            } else if (isOff) {
-                raw.push_back({ev.absoluteTick, ev.data1, false});
-            }
+            if (isOn)  { raw.push_back({ev.absoluteTick, ev.data1, true});
+                         lo = std::min(lo,(int)ev.data1); hi = std::max(hi,(int)ev.data1); }
+            else if (isOff) raw.push_back({ev.absoluteTick, ev.data1, false});
         }
     }
     if (raw.empty()) return {};
-
     std::sort(raw.begin(), raw.end(), [](auto& a, auto& b){ return a.tick < b.tick; });
 
-    std::vector<TimedNote> timeline;
+    std::vector<TimedNote> tl;
     for (auto& r : raw) {
-        auto key = RobloxKeyMapper::map(r.note + transposeAmount);
-        if (key) timeline.push_back({tickToUs(r.tick, midi.division, midi.tempoChanges), *key, r.press});
+        auto key = RobloxKeyMapper::map(r.note + transpose);
+        if (key) tl.push_back({tickToUs(r.tick, midi.division, midi.tempoChanges), *key, r.press});
     }
-    return timeline;
+    return tl;
 }
 
-static bool countdown(std::atomic<bool>& running, MIDIPlayer::StatusCallback onStatus) {
+static MidiFile parseMidi(const std::string& path) {
+    std::string p = path;
+    if (!p.empty() && p.front() == '~') {
+        const char* home = std::getenv("HOME");
+        if (home) p = std::string(home) + p.substr(1);
+    }
+    MidiParser parser;
+    return parser.parse(p);
+}
+
+static bool countdown(std::atomic<bool>& running, MIDIPlayer::StatusCallback cb) {
     for (int i = 3; i > 0; --i) {
         if (!running) return false;
-        onStatus("Starting in " + std::to_string(i) + "...");
+        cb("Starting in " + std::to_string(i) + "...");
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
     return running.load();
 }
 
-// ─── MIDIPlayer ──────────────────────────────────────────────────────────────
+// ─── Public API ──────────────────────────────────────────────────────────────
+
+double MIDIPlayer::fileDuration(const std::string& path) {
+    try {
+        auto midi = parseMidi(path);
+        if (midi.tempoChanges.empty()) midi.tempoChanges.push_back({0, 500000});
+        std::sort(midi.tempoChanges.begin(), midi.tempoChanges.end(),
+                  [](auto& a, auto& b){ return a.tick < b.tick; });
+        uint32_t lastTick = 0;
+        for (const auto& track : midi.tracks)
+            for (const auto& ev : track.events)
+                lastTick = std::max(lastTick, ev.absoluteTick);
+        return tickToUs(lastTick, midi.division, midi.tempoChanges) / 1e6;
+    } catch (...) { return 0.0; }
+}
 
 void MIDIPlayer::stop() {
     m_running = false;
+    m_paused  = false;
+    m_pauseCv.notify_all();
     if (m_thread.joinable()) m_thread.join();
+    m_position = 0.0;
+}
+
+void MIDIPlayer::pause() {
+    m_paused = true;
+}
+
+void MIDIPlayer::resume() {
+    m_paused = false;
+    m_pauseCv.notify_all();
+}
+
+void MIDIPlayer::seek(double seconds) {
+    m_seekTarget.store(seconds < 0.0 ? 0.0 : seconds);
+    if (m_paused.load()) { m_paused = false; m_pauseCv.notify_all(); }
+}
+
+void MIDIPlayer::setSpeed(double speed) {
+    m_speed.store(std::max(0.25, std::min(2.0, speed)));
 }
 
 void MIDIPlayer::playFile(const std::string& path,
@@ -82,71 +120,101 @@ void MIDIPlayer::playFile(const std::string& path,
                           StatusCallback onStatus,
                           DoneCallback   onDone) {
     stop();
-    m_running = true;
+    m_running    = true;
+    m_paused     = false;
+    m_position   = 0.0;
+    m_seekTarget = -1.0;
 
     m_thread = std::thread([this, path, onKey, onStatus, onDone]() {
-        // Parse
         onStatus("Loading...");
         MidiFile midi;
-        try {
-            // Expand leading ~
-            std::string p = path;
-            if (!p.empty() && p.front() == '~') {
-                const char* home = std::getenv("HOME");
-                if (home) p = std::string(home) + p.substr(1);
-            }
-            MidiParser parser;
-            midi = parser.parse(p);
-        } catch (const std::exception& ex) {
+        try { midi = parseMidi(path); }
+        catch (const std::exception& ex) {
             onStatus(std::string("Error: ") + ex.what());
-            onDone();
-            return;
+            onDone(); return;
         }
 
-        if (midi.tempoChanges.empty())
-            midi.tempoChanges.push_back({0, 500000});
+        if (midi.tempoChanges.empty()) midi.tempoChanges.push_back({0, 500000});
         std::sort(midi.tempoChanges.begin(), midi.tempoChanges.end(),
                   [](auto& a, auto& b){ return a.tick < b.tick; });
 
-        // Collect notes for range detection
         int lo = 127, hi = 0;
         for (const auto& track : midi.tracks)
             for (const auto& ev : track.events)
                 if ((ev.status & 0xF0) == 0x90 && ev.data2 > 0) {
-                    lo = std::min(lo, (int)ev.data1);
-                    hi = std::max(hi, (int)ev.data1);
+                    lo = std::min(lo,(int)ev.data1); hi = std::max(hi,(int)ev.data1);
                 }
 
-        int shift = RobloxKeyMapper::autoTranspose(lo, hi);
+        int shift     = RobloxKeyMapper::autoTranspose(lo, hi);
         auto timeline = buildTimeline(midi, shift);
 
         if (timeline.empty()) {
             onStatus("Error: No playable notes found.");
-            onDone();
-            return;
+            onDone(); return;
         }
 
+        double dur = timeline.back().us / 1e6;
+        m_duration.store(dur);
+
         std::string info = std::to_string(timeline.size()) + " notes";
-        if (shift != 0) info += "  (transposed " + (shift > 0 ? std::string("+") : "") + std::to_string(shift) + ")";
+        if (shift) info += "  (transposed " + (shift > 0 ? std::string("+") : "") + std::to_string(shift) + ")";
         onStatus(info);
 
         if (!countdown(m_running, onStatus)) { onDone(); return; }
-
-        onStatus("Playing \xe2\x99\xaa"); // ♪
+        onStatus("Playing \xe2\x99\xaa");
 
         using Clock = std::chrono::steady_clock;
         auto start  = Clock::now();
+        size_t i    = 0;
 
-        for (const auto& note : timeline) {
-            if (!m_running) break;
-            auto target = start + std::chrono::microseconds(note.us);
-            std::this_thread::sleep_until(target);
-            if (!m_running) break;
-            onKey(note.key, note.press);
+        while (i < timeline.size() && m_running.load()) {
+            // Seek
+            double seekVal = m_seekTarget.exchange(-1.0);
+            if (seekVal >= 0.0) {
+                double seekUs = seekVal * 1e6;
+                i = 0;
+                while (i < timeline.size() && timeline[i].us < (int64_t)seekUs) ++i;
+                start = Clock::now() - std::chrono::microseconds((int64_t)(seekUs / m_speed.load()));
+                m_position.store(seekVal);
+                continue;
+            }
+
+            // Pause
+            if (m_paused.load()) {
+                auto pauseStart = Clock::now();
+                {
+                    std::unique_lock<std::mutex> lk(m_pauseMu);
+                    m_pauseCv.wait(lk, [this]{ return !m_paused.load() || !m_running.load(); });
+                }
+                start += Clock::now() - pauseStart;
+                if (!m_running.load()) break;
+                continue;
+            }
+
+            // Sleep until note fires
+            double sp  = m_speed.load();
+            auto target = start + std::chrono::microseconds((int64_t)(timeline[i].us / sp));
+
+            while (m_running.load() && !m_paused.load() && m_seekTarget.load() < 0.0) {
+                auto now = Clock::now();
+                if (now >= target) break;
+                auto rem = std::chrono::duration_cast<std::chrono::microseconds>(target - now);
+                std::this_thread::sleep_for(std::min(rem, std::chrono::microseconds(8'000)));
+                auto el = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start);
+                m_position.store(std::min(el.count() * sp / 1e6, dur));
+            }
+
+            if (!m_running.load()) break;
+            if (m_paused.load() || m_seekTarget.load() >= 0.0) continue;
+
+            onKey(timeline[i].key, timeline[i].press);
+            auto el = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start);
+            m_position.store(std::min(el.count() * sp / 1e6, dur));
+            ++i;
         }
 
+        m_position.store(0.0);
         if (m_running) onStatus("Done!");
         onDone();
     });
 }
-
