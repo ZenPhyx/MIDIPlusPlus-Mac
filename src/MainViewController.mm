@@ -126,16 +126,19 @@
 
 static NSButton* makeButton(NSString* title, NSColor* color, id target, SEL action) {
     NSButton* btn = [[NSButton alloc] initWithFrame:NSZeroRect];
-    btn.title      = title;
-    btn.target     = target;
-    btn.action     = action;
     btn.bezelStyle = NSBezelStyleRegularSquare;
     btn.bordered   = NO;
+    btn.target     = target;
+    btn.action     = action;
     btn.wantsLayer = YES;
     btn.layer.backgroundColor = color.CGColor;
     btn.layer.cornerRadius    = 8;
-    btn.contentTintColor      = NSColor.whiteColor;
-    btn.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
+
+    NSDictionary* attrs = @{
+        NSForegroundColorAttributeName: NSColor.whiteColor,
+        NSFontAttributeName: [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold]
+    };
+    btn.attributedTitle = [[NSAttributedString alloc] initWithString:title attributes:attrs];
     return btn;
 }
 

@@ -32,8 +32,7 @@ jobs:
 
       - name: Publish latest release
         run: |
-          gh release delete latest --yes 2>/dev/null || true
-          git push origin :refs/tags/latest 2>/dev/null || true
+          gh release delete latest --cleanup-tag --yes 2>/dev/null || true
           gh release create latest build/RobloxPiano.zip \
             --title "Roblox Piano (macOS)" \
             --notes "Double-click RobloxPiano.app to open. First launch: right-click → Open to bypass Gatekeeper. Then add Terminal to Accessibility in System Settings → Privacy & Security." \
