@@ -15,21 +15,33 @@ set(CORE_SOURCES
 if(WIN32)
 # ── Windows build ─────────────────────────────────────────────────────────────
 
+    # Download WebView2 SDK (NuGet package = zip file)
+    include(FetchContent)
+    FetchContent_Declare(wv2
+        URL "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/1.0.3240.44"
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(wv2)
+
     add_executable(Snuffiano WIN32
         ${CORE_SOURCES}
         src/windows/main.cpp
         src/windows/WinInputInjector.cpp
     )
 
-    target_include_directories(Snuffiano PRIVATE include)
+    target_include_directories(Snuffiano PRIVATE
+        include
+        "${wv2_SOURCE_DIR}/build/native/include"
+    )
     target_compile_definitions(Snuffiano PRIVATE __WINDOWS_MM__ UNICODE _UNICODE)
-    target_compile_options(Snuffiano PRIVATE /utf-8)   # source files are UTF-8
+    target_compile_options(Snuffiano PRIVATE /utf-8)
 
-    # Static runtime so the exe runs without the VC++ redistributable
+    # Static runtime — no VC++ redistributable needed
     set_property(TARGET Snuffiano PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
     target_link_libraries(Snuffiano
-        winmm ole32 oleaut32 gdi32 comctl32 comdlg32 shell32 shlwapi
+        "${wv2_SOURCE_DIR}/build/native/x64/WebView2LoaderStatic.lib"
+        winmm ole32 oleaut32 version gdi32 comctl32 comdlg32 shell32
     )
 
 # ─────────────────────────────────────────────────────────────────────────────

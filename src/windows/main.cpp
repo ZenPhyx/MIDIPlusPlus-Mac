@@ -1,13 +1,12 @@
 #ifndef UNICODE
 #define UNICODE
 #endif
-#ifndef _UNICODE
-#define _UNICODE
-#endif
 #define WIN32_LEAN_AND_MEAN
-#define NOMINMAX        // prevent Windows headers from defining min/max macros
+#define NOMINMAX
 #include <windows.h>
-#include <commctrl.h>
+#include <wrl.h>
+#include <wrl/event.h>
+#include <WebView2.h>
 #include <commdlg.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -16,7 +15,6 @@
 #include <algorithm>
 #include <memory>
 #include <fstream>
-#include <cctype>
 #include <cmath>
 
 #include "MIDIPlayer.hpp"
@@ -24,47 +22,161 @@
 #include "InputInjector.hpp"
 #include "RtMidi.h"
 
-#pragma comment(lib, "comctl32.lib")
-#pragma comment(lib, "comdlg32.lib")
-#pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "winmm.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "comdlg32.lib")
+#pragma comment(lib, "version.lib")
 
-// ─── Colors (BGR for Win32) ───────────────────────────────────────────────────
+using namespace Microsoft::WRL;
 
-static COLORREF clrWin()   { return 0xE3EFF5; }  // cream
-static COLORREF clrBar()   { return 0xD5E5ED; }  // slightly darker cream
-static COLORREF clrText()  { return 0x100E1C; }  // dark ink
-static COLORREF clrDim()   { return 0x887060; }  // muted
-static COLORREF clrInput() { return 0xF8FEFE; }  // near-white
-
-// ─── IDs ─────────────────────────────────────────────────────────────────────
-
-enum {
-    ID_BROWSE   = 101,
-    ID_SEARCH, ID_LIBRARY,
-    ID_ELAPSED, ID_TOTAL, ID_PROGRESS,
-    ID_RESTART, ID_REWIND, ID_PLAYPAUSE, ID_FWD, ID_STOP,
-    ID_SPEED_SLD, ID_SPEED_LBL,
-    ID_DEVICE_CMB, ID_REFRESH, ID_LIVE,
-    ID_STATUS,
-    ID_TIMER_PROGRESS = 200,
-    ID_TIMER_MIDI     = 201,
+// ─── Embedded HTML UI ────────────────────────────────────────────────────────
+// The complete Snuffiano UI — same design as the macOS version.
+static const char HTML_UI[] = R"HTML(<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#F5EFE3;--bar:#EDE5D5;--pri:#1C1410;--sec:rgba(28,20,16,.5);--dim:rgba(28,20,16,.28);--sep:rgba(0,0,0,.09);--inp:rgba(255,255,255,.6);--lib:rgba(255,255,255,.45);--btn:rgba(255,255,255,.6);--act:rgba(200,53,42,.11);--red:#C8352A;--gold:#D4A827}
+.dark{--bg:#1C1610;--bar:#140E08;--pri:#F0E8DC;--sec:rgba(240,232,220,.45);--dim:rgba(240,232,220,.22);--sep:rgba(255,255,255,.08);--inp:rgba(255,255,255,.07);--lib:rgba(255,255,255,.04);--btn:rgba(255,255,255,.08);--act:rgba(200,53,42,.22)}
+body{font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);width:460px;overflow-x:hidden;transition:background .25s}
+.bar{background:var(--bar);border-bottom:1px solid var(--sep);padding:4px 20px 6px;display:flex;align-items:center;gap:8px;position:relative;transition:background .25s,border-color .25s}
+.bar-icon{width:40px;height:40px;border-radius:9px;border:2px solid var(--red);object-fit:cover;flex-shrink:0}
+.bar-title{font-size:18px;font-weight:700;color:var(--pri);letter-spacing:-.3px;transition:color .25s}
+.bar-credit{position:absolute;right:50px;font-size:10px;color:var(--dim);transition:color .25s}
+.dark-btn{position:absolute;right:20px;width:26px;height:20px;background:rgba(0,0,0,.07);border:1px solid var(--sep);border-radius:5px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;user-select:none}
+.dark .dark-btn{background:rgba(255,255,255,.08)}
+.c{padding:8px 20px 14px}
+.sep{height:1px;background:var(--sep);margin-bottom:8px;transition:background .25s}
+.drop{height:70px;background:var(--inp);border:1.5px dashed var(--sep);border-radius:10px;display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:6px;cursor:pointer;transition:background .15s}
+.drop:hover{filter:brightness(1.05)}
+.drop-main{font-size:13px;font-weight:600;color:var(--pri);transition:color .25s}
+.drop-sub{font-size:11px;color:var(--sec);margin-top:2px;transition:color .25s}
+.lib-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:5px}
+.lbl-sm{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--sec);transition:color .25s}
+.lib-cnt{font-size:10px;color:var(--dim);transition:color .25s}
+.search{width:100%;height:26px;background:var(--inp);border:1px solid var(--sep);border-radius:7px;padding:0 10px 0 26px;font-size:12.5px;color:var(--pri);outline:none;margin-bottom:5px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:7px center;transition:background-color .25s,border-color .25s,color .25s}
+.search:focus{border-color:rgba(200,53,42,.45);box-shadow:0 0 0 2px rgba(200,53,42,.1)}
+.lib{background:var(--lib);border:1px solid var(--sep);border-radius:10px;overflow:hidden;margin-bottom:10px;max-height:130px;overflow-y:auto;transition:background .25s,border-color .25s}
+.lib::-webkit-scrollbar{width:4px}.lib::-webkit-scrollbar-thumb{background:rgba(0,0,0,.15);border-radius:2px}
+.dark .lib::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12)}
+.li{display:flex;align-items:center;height:30px;padding:0 10px;gap:8px;cursor:pointer;border-bottom:1px solid var(--sep);transition:background .1s}
+.li:last-child{border-bottom:none}.li:hover{background:rgba(200,53,42,.06)}.li.sel{background:var(--act)}
+.li-n{font-size:10px;color:var(--dim);width:16px;text-align:right;flex-shrink:0}
+.li-ic{font-size:13px;flex-shrink:0}
+.li-nm{flex:1;font-size:12.5px;font-weight:500;color:var(--pri);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.li-d{font-size:10.5px;color:var(--sec);flex-shrink:0;font-variant-numeric:tabular-nums}
+.li-x{font-size:11px;color:var(--dim);flex-shrink:0;cursor:pointer;padding:2px 4px;border-radius:3px}
+.li-x:hover{color:var(--red);background:rgba(200,53,42,.08)}
+.lib-empty{padding:16px;text-align:center;font-size:12px;color:var(--sec)}
+.pt{display:flex;justify-content:space-between;font-size:11px;color:var(--sec);margin-bottom:4px;font-variant-numeric:tabular-nums;transition:color .25s}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;outline:none;cursor:pointer}
+.pb::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--red);box-shadow:0 1px 4px rgba(200,53,42,.4);cursor:pointer}
+.sb::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--gold);box-shadow:0 1px 4px rgba(212,168,39,.4);cursor:pointer}
+.pw{margin-bottom:12px}
+.trans{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:8px}
+.tb{border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:600;background:var(--btn);border:1px solid var(--sep);color:var(--pri);transition:filter .12s,background .25s,border-color .25s,color .25s}
+.tb:hover{filter:brightness(.9)}.tb:active{transform:scale(.95)}
+.tb-sm{width:44px;height:36px;font-size:12px;flex-direction:column;gap:1px}
+.tb-sm span{font-size:8.5px;color:var(--sec);font-weight:500}
+.tb-play{width:60px;height:46px;font-size:20px;font-weight:700;background:var(--red);color:#fff;border:none;border-radius:10px;box-shadow:0 2px 8px rgba(200,53,42,.4)}
+.tb-side{width:44px;height:36px;font-size:15px}
+.tb-stop{color:var(--red)}
+.sr{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.sr-lbl{font-size:11.5px;font-weight:600;color:var(--sec);white-space:nowrap;transition:color .25s}
+.sr-val{font-size:11.5px;font-weight:700;color:var(--gold);white-space:nowrap;min-width:34px;text-align:right}
+.sep-sm{height:1px;background:var(--sep);margin:8px 0;transition:background .25s}
+.or{text-align:center;font-size:11px;color:var(--dim);margin-bottom:6px;transition:color .25s}
+.dr{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.dr-lbl{font-size:12.5px;color:var(--sec);white-space:nowrap;width:104px;flex-shrink:0;transition:color .25s}
+.dr-sel{flex:1;height:26px;background:var(--inp);border:1px solid var(--sep);border-radius:6px;color:var(--pri);font-size:12.5px;padding:0 8px;appearance:none;transition:background .25s,border-color .25s,color .25s}
+.ref{width:34px;height:26px;background:var(--btn);border:1px solid var(--sep);border-radius:6px;color:var(--pri);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .25s}
+.live{width:100%;height:38px;background:var(--gold);border:none;border-radius:8px;font-size:13px;font-weight:700;color:#1C1410;cursor:pointer;box-shadow:0 2px 8px rgba(212,168,39,.38);margin-bottom:8px;transition:filter .12s}
+.live:hover{filter:brightness(.93)}
+.status{text-align:center;font-size:11.5px;color:var(--sec);margin-bottom:5px;transition:color .25s}
+.a11y{text-align:center;font-size:9px;color:var(--dim);line-height:1.4;transition:color .25s}
+</style></head>
+<body><div id="win">
+<div class="bar">
+  <img class="bar-icon" id="icon" src="" alt="" onerror="this.style.display='none'">
+  <span class="bar-title">Snuffiano</span>
+  <span class="bar-credit">Created by ZenPhyx</span>
+  <div class="dark-btn" id="dtb" onclick="toggleDark()">&#x1F319;</div>
+</div>
+<div class="c">
+  <div class="sep"></div>
+  <div class="drop" onclick="send({a:'browse'})">
+    <span style="font-size:22px">&#x1F3B5;</span>
+    <div><div class="drop-main">Drop a MIDI file here</div><div class="drop-sub">or click to browse &amp; save to library</div></div>
+  </div>
+  <div class="lib-hdr"><span class="lbl-sm">Library</span><span class="lib-cnt" id="cnt">0 songs</span></div>
+  <input class="search" type="text" placeholder="Search songs&#x2026;" id="srch" oninput="send({a:'search',q:this.value})">
+  <div class="lib" id="lib"></div>
+  <div class="pw">
+    <div class="pt"><span id="el">0:00</span><span id="tot">0:00</span></div>
+    <input type="range" class="pb" id="pb" value="0" min="0" max="1000" oninput="updPb(this);send({a:'seek',v:this.value/1000})">
+  </div>
+  <div class="trans">
+    <button class="tb tb-side" onclick="send({a:'restart'})">&#x21A9;</button>
+    <button class="tb tb-sm" onclick="send({a:'rewind'})">&#x27E8;&#x27E8;<span>&minus;10s</span></button>
+    <button class="tb tb-play" id="ppb" onclick="send({a:'play'})">&#x25B6;</button>
+    <button class="tb tb-sm" onclick="send({a:'forward'})">&#x27E9;&#x27E9;<span>+10s</span></button>
+    <button class="tb tb-side tb-stop" onclick="send({a:'stop'})">&#x25A0;</button>
+  </div>
+  <div class="sr">
+    <span class="sr-lbl">Speed</span>
+    <input type="range" class="sb" id="spd" value="43" min="0" max="100" style="flex:1" oninput="onSpd(this.value)">
+    <span class="sr-val" id="sv">1.00&times;</span>
+  </div>
+  <div class="sep-sm"></div>
+  <div class="or">&mdash;&nbsp; or use a MIDI keyboard &nbsp;&mdash;</div>
+  <div class="dr">
+    <span class="dr-lbl">MIDI Keyboard:</span>
+    <select class="dr-sel" id="devs"><option>No MIDI devices found</option></select>
+    <div class="ref" onclick="send({a:'refresh'})">&#x21BA;</div>
+  </div>
+  <button class="live" onclick="send({a:'live',i:document.getElementById('devs').selectedIndex})">&#x1F3B9;&nbsp; Live Mode</button>
+  <div class="status" id="st">Drop a MIDI file or pick one from your library</div>
+  <div class="a11y">Accessibility required &middot; Run as administrator if keys don&apos;t inject</div>
+</div></div>
+<script>
+let dark=false,sel=-1,gdur=0;
+function send(o){if(window.chrome&&window.chrome.webview)window.chrome.webview.postMessage(JSON.stringify(o));}
+function toggleDark(){dark=!dark;document.getElementById('win').className=dark?'dark':'';document.getElementById('dtb').innerHTML=dark?'&#x2600;&#xFE0F;':'&#x1F319;';document.body.style.background=dark?'#1C1610':'#F5EFE3';updSliders();}
+function tc(){return dark?'rgba(255,255,255,.12)':'rgba(0,0,0,.12)';}
+function updPb(r){r.style.background=`linear-gradient(to right,#C8352A ${r.value/10}%,${tc()} ${r.value/10}%)`;}
+function updSpd(r){r.style.background=`linear-gradient(to right,#D4A827 ${r.value}%,${tc()} ${r.value}%)`;}
+function updSliders(){updPb(document.getElementById('pb'));updSpd(document.getElementById('spd'));}
+function onSpd(v){const sp=0.25+v/100*1.75;document.getElementById('sv').textContent=sp.toFixed(2)+'×';updSpd(document.getElementById('spd'));send({a:'speed',v:sp});}
+function fmt(s){const t=Math.floor(s);return Math.floor(t/60)+':'+(''+(t%60)).padStart(2,'0');}
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function selRow(i){document.querySelectorAll('.li').forEach((e,j)=>e.className='li'+(j===i?' sel':''));sel=i;send({a:'select',i:i});}
+window.snuf={
+  progress(pos,dur){gdur=dur;const f=dur>0?pos/dur:0;const pb=document.getElementById('pb');pb.value=Math.round(f*1000);updPb(pb);document.getElementById('el').textContent=fmt(pos);document.getElementById('tot').textContent=fmt(dur);},
+  status(m){document.getElementById('st').textContent=m;},
+  setLibrary(items){sel=-1;const lib=document.getElementById('lib');const cnt=document.getElementById('cnt');cnt.textContent=items.length+(items.length===1?' song':' songs');if(!items.length){lib.innerHTML='<div class="lib-empty">Library is empty &mdash; browse a MIDI file to add it</div>';return;}lib.innerHTML=items.map((it,i)=>`<div class="li" onclick="selRow(${i})"><span class="li-n">${i+1}</span><span class="li-ic">&#x1F3B5;</span><span class="li-nm">${esc(it.name)}</span><span class="li-d">${it.dur}</span><span class="li-x" onclick="event.stopPropagation();send({a:'delete',i:${i}})">&#x2715;</span></div>`).join('');},
+  setDevices(d){document.getElementById('devs').innerHTML=d.map(x=>`<option>${esc(x)}</option>`).join('');},
+  setPlaying(p){document.getElementById('ppb').innerHTML=p?'&#x23F8;':'&#x25B6;';},
 };
+if(window.chrome&&window.chrome.webview){window.chrome.webview.addEventListener('message',e=>{try{const d=JSON.parse(e.data);if(d.fn&&window.snuf[d.fn])window.snuf[d.fn](...(d.args||[]));} catch(ex){}});}
+updSliders();send({a:'init'});
+</script></body></html>)HTML";
 
 // ─── Globals ──────────────────────────────────────────────────────────────────
 
-static HWND    g_hwnd;
-static HBRUSH  g_brWin, g_brBar, g_brInput;
-static HFONT   g_fontTitle, g_fontBold, g_fontNorm, g_fontSm;
+static HWND g_hwnd;
+static ComPtr<ICoreWebView2Controller> g_wvc;
+static ComPtr<ICoreWebView2>           g_wv;
 
 static std::unique_ptr<MIDIPlayer>  g_player;
 static std::unique_ptr<RtMidiIn>    g_midiIn;
 static std::vector<unsigned char>   g_midiMsg;
+static std::vector<std::string>     g_deviceNames;
 
 struct LibEntry { std::wstring path, name, duration; };
 static std::vector<LibEntry>  g_library;
 static std::vector<LibEntry*> g_filtered;
 static int g_selected = -1;
+
+static const UINT_PTR TID_PROGRESS = 1;
+static const UINT_PTR TID_MIDI     = 2;
 
 // ─── String helpers ───────────────────────────────────────────────────────────
 
@@ -73,536 +185,331 @@ static std::wstring toWide(const std::string& s) {
     int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
     std::wstring w(n, 0);
     MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
-    if (!w.empty() && w.back() == 0) w.pop_back();
+    if (!w.empty() && w.back()==0) w.pop_back();
     return w;
 }
-
 static std::string toUtf8(const std::wstring& w) {
     if (w.empty()) return {};
     int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
     std::string s(n, 0);
     WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
-    if (!s.empty() && s.back() == 0) s.pop_back();
+    if (!s.empty() && s.back()==0) s.pop_back();
     return s;
 }
-
 static std::wstring fmtDur(double sec) {
-    int t = (int)sec;
-    wchar_t buf[16];
-    swprintf_s(buf, L"%d:%02d", t / 60, t % 60);
-    return buf;
+    int t = (int)sec; wchar_t b[16];
+    swprintf_s(b, L"%d:%02d", t/60, t%60); return b;
 }
-
-// Extract filename without extension from a full path
 static std::wstring stemOf(const std::wstring& path) {
-    size_t slash = path.find_last_of(L"\\/");
-    std::wstring name = (slash == std::wstring::npos) ? path : path.substr(slash + 1);
-    size_t dot = name.rfind(L'.');
-    if (dot != std::wstring::npos) name = name.substr(0, dot);
-    return name;
+    size_t sl = path.find_last_of(L"\\/");
+    std::wstring n = sl==std::wstring::npos ? path : path.substr(sl+1);
+    size_t dot = n.rfind(L'.'); if (dot!=std::wstring::npos) n=n.substr(0,dot);
+    return n;
 }
 
 // ─── Library persistence ──────────────────────────────────────────────────────
 
-static std::wstring libFilePath() {
-    wchar_t buf[MAX_PATH] = {};
+static std::wstring libFile() {
+    wchar_t buf[MAX_PATH]={};
     SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, buf);
-    std::wstring dir = std::wstring(buf) + L"\\Snuffiano";
-    CreateDirectoryW(dir.c_str(), nullptr);
-    return dir + L"\\library.txt";
+    std::wstring d = std::wstring(buf)+L"\\Snuffiano";
+    CreateDirectoryW(d.c_str(), nullptr);
+    return d+L"\\library.txt";
 }
-
-static void saveLibrary() {
-    std::wofstream f(libFilePath());
+static void saveLib() {
+    std::wofstream f(libFile());
     for (auto& e : g_library) f << e.path << L"\n";
 }
-
-static void loadLibrary() {
-    std::wifstream f(libFilePath());
-    std::wstring line;
+static void loadLib() {
+    std::wifstream f(libFile()); std::wstring line;
     while (std::getline(f, line)) {
         if (line.empty()) continue;
         double dur = MIDIPlayer::fileDuration(toUtf8(line));
-        g_library.push_back({ line, stemOf(line), dur > 0 ? fmtDur(dur) : L"--:--" });
+        g_library.push_back({line, stemOf(line), dur>0?fmtDur(dur):L"--:--"});
     }
 }
-
 static void addFile(const std::wstring& path) {
-    for (auto& e : g_library)
-        if (e.path == path) return;
+    for (auto& e : g_library) if (e.path==path) return;
     double dur = MIDIPlayer::fileDuration(toUtf8(path));
-    g_library.insert(g_library.begin(), { path, stemOf(path), dur > 0 ? fmtDur(dur) : L"--:--" });
-    saveLibrary();
+    g_library.insert(g_library.begin(), {path, stemOf(path), dur>0?fmtDur(dur):L"--:--"});
+    saveLib();
 }
 
-// ─── UI helpers ───────────────────────────────────────────────────────────────
+// ─── JS execution ─────────────────────────────────────────────────────────────
 
-static void setStatus(const std::wstring& msg) {
-    SetDlgItemTextW(g_hwnd, ID_STATUS, msg.c_str());
-}
-static void setStatus(const std::string& msg) { setStatus(toWide(msg)); }
-
-static void updateBrushes() {
-    if (g_brWin)   { DeleteObject(g_brWin);   g_brWin   = nullptr; }
-    if (g_brBar)   { DeleteObject(g_brBar);   g_brBar   = nullptr; }
-    if (g_brInput) { DeleteObject(g_brInput); g_brInput = nullptr; }
-    g_brWin   = CreateSolidBrush(clrWin());
-    g_brBar   = CreateSolidBrush(clrBar());
-    g_brInput = CreateSolidBrush(clrInput());
-}
-
-static void populateDevices() {
-    HWND cb = GetDlgItem(g_hwnd, ID_DEVICE_CMB);
-    SendMessage(cb, CB_RESETCONTENT, 0, 0);
-    try {
-        RtMidiIn midi;
-        unsigned int n = midi.getPortCount();
-        if (n == 0) {
-            SendMessage(cb, CB_ADDSTRING, 0, (LPARAM)L"No MIDI devices found");
-        } else {
-            for (unsigned int i = 0; i < n; ++i)
-                SendMessage(cb, CB_ADDSTRING, 0, (LPARAM)toWide(midi.getPortName(i)).c_str());
-        }
-    } catch (...) {
-        SendMessage(cb, CB_ADDSTRING, 0, (LPARAM)L"Error listing devices");
+static std::wstring jsEsc(const std::wstring& s) {
+    std::wstring r; r.reserve(s.size());
+    for (wchar_t c : s) {
+        if      (c==L'\'') r+=L"\\'";
+        else if (c==L'\\') r+=L"\\\\";
+        else if (c==L'\n') r+=L"\\n";
+        else                r+=c;
     }
-    SendMessage(cb, CB_SETCURSEL, 0, 0);
+    return r;
 }
 
-static void filterLibrary(const std::wstring& q) {
-    g_filtered.clear();
+static void jsExec(const std::wstring& script) {
+    if (g_wv) g_wv->ExecuteScript(script.c_str(), nullptr);
+}
+static void jsCall(const wchar_t* fn, const std::wstring& args) {
+    jsExec(std::wstring(L"window.snuf.") + fn + L"(" + args + L")");
+}
+
+static void pushLibrary(const std::wstring& q) {
     std::wstring ql = q;
-    std::transform(ql.begin(), ql.end(), ql.begin(), [](wchar_t c){ return (wchar_t)towlower(c); });
+    std::transform(ql.begin(), ql.end(), ql.begin(), [](wchar_t c){return (wchar_t)towlower(c);});
+    g_filtered.clear();
     for (auto& e : g_library) {
         std::wstring nl = e.name;
-        std::transform(nl.begin(), nl.end(), nl.begin(), [](wchar_t c){ return (wchar_t)towlower(c); });
-        if (ql.empty() || nl.find(ql) != std::wstring::npos)
-            g_filtered.push_back(&e);
+        std::transform(nl.begin(), nl.end(), nl.begin(), [](wchar_t c){return (wchar_t)towlower(c);});
+        if (ql.empty() || nl.find(ql)!=std::wstring::npos) g_filtered.push_back(&e);
     }
-    HWND lb = GetDlgItem(g_hwnd, ID_LIBRARY);
-    SendMessage(lb, LB_RESETCONTENT, 0, 0);
+    std::wstring arr = L"[";
     for (auto* e : g_filtered)
-        SendMessage(lb, LB_ADDSTRING, 0, (LPARAM)e->name.c_str());
+        arr += L"{name:'" + jsEsc(e->name) + L"',dur:'" + jsEsc(e->duration) + L"'},";
+    arr += L"]";
+    jsCall(L"setLibrary", arr);
+}
 
-    wchar_t buf[64];
-    swprintf_s(buf, L"%zu song%s", g_filtered.size(), g_filtered.size() == 1 ? L"" : L"s");
-    SetDlgItemTextW(g_hwnd, ID_STATUS, buf);
+static void pushDevices() {
+    g_deviceNames.clear();
+    std::wstring arr = L"[";
+    try {
+        RtMidiIn midi; unsigned int n = midi.getPortCount();
+        if (!n) { arr += L"'No MIDI devices found'"; g_deviceNames.push_back(""); }
+        else for (unsigned int i=0; i<n; ++i) {
+            auto nm = midi.getPortName(i);
+            g_deviceNames.push_back(nm);
+            arr += L"'" + jsEsc(toWide(nm)) + L"',";
+        }
+    } catch (...) { arr += L"'Error listing devices'"; }
+    arr += L"]";
+    jsCall(L"setDevices", arr);
 }
 
 // ─── Playback ─────────────────────────────────────────────────────────────────
 
 static void startPlaying() {
-    if (g_selected < 0 || g_selected >= (int)g_filtered.size()) {
-        setStatus(L"Select a song from the library first.");
+    if (g_selected<0 || g_selected>=(int)g_filtered.size()) {
+        jsCall(L"status", L"'Select a song from the library first.'"); return;
+    }
+    KillTimer(g_hwnd, TID_PROGRESS);
+    std::string path = toUtf8(g_filtered[g_selected]->path);
+
+    g_player->playFile(path,
+        [](char key, bool press){ press ? pressKey(key) : releaseKey(key); },
+        [](const std::string& msg){
+            auto* s = new std::wstring(toWide(msg));
+            PostMessage(g_hwnd, WM_USER+1, 0, (LPARAM)s);
+        },
+        [](){ PostMessage(g_hwnd, WM_USER+2, 0, 0); }
+    );
+    jsCall(L"setPlaying", L"true");
+    SetTimer(g_hwnd, TID_PROGRESS, 100, nullptr);
+}
+
+// ─── JS message handler ───────────────────────────────────────────────────────
+
+static void onMsg(const std::wstring& m) {
+    auto has = [&](const wchar_t* k){ return m.find(k)!=std::wstring::npos; };
+    auto numv = [&](const wchar_t* k) -> double {
+        auto p = m.find(k); if (p==std::wstring::npos) return 0;
+        p = m.find(L':', p+wcslen(k)); if (p==std::wstring::npos) return 0;
+        return _wtof(m.c_str()+p+1);
+    };
+
+    if (has(L"\"init\""))    { pushLibrary(L""); pushDevices(); return; }
+    if (has(L"\"refresh\"")) { pushDevices(); return; }
+
+    if (has(L"\"browse\"")) {
+        wchar_t path[MAX_PATH]={};
+        OPENFILENAMEW ofn={};
+        ofn.lStructSize=sizeof(ofn); ofn.hwndOwner=g_hwnd;
+        ofn.lpstrFilter=L"MIDI Files\0*.mid;*.midi\0All Files\0*.*\0";
+        ofn.lpstrFile=path; ofn.nMaxFile=MAX_PATH; ofn.Flags=OFN_FILEMUSTEXIST;
+        if (GetOpenFileNameW(&ofn)) {
+            addFile(path);
+            jsExec(L"document.getElementById('srch').value=''");
+            pushLibrary(L"");
+        }
         return;
     }
-    std::string path = toUtf8(g_filtered[g_selected]->path);
-    double dur = MIDIPlayer::fileDuration(path);
-    SetDlgItemTextW(g_hwnd, ID_TOTAL, fmtDur(dur).c_str());
-    SendMessage(GetDlgItem(g_hwnd, ID_PROGRESS), TBM_SETPOS, TRUE, 0);
 
-    g_player->playFile(
-        path,
-        [](char key, bool press) { press ? pressKey(key) : releaseKey(key); },
-        [](const std::string& msg) {
-            // Marshal status to main thread
-            auto* s = new std::wstring(toWide(msg));
-            PostMessage(g_hwnd, WM_USER + 1, 0, (LPARAM)s);
-        },
-        []() { PostMessage(g_hwnd, WM_USER + 2, 0, 0); }
-    );
+    if (has(L"\"search\"")) {
+        auto p = m.find(L"\"q\""); if (p==std::wstring::npos) return;
+        p = m.find(L'"', p+4); if (p==std::wstring::npos) return; p++;
+        auto e = m.find(L'"', p); if (e==std::wstring::npos) return;
+        pushLibrary(m.substr(p, e-p));
+        return;
+    }
 
-    SetDlgItemTextW(g_hwnd, ID_PLAYPAUSE, L"Pause"); // ⏸
-    SetTimer(g_hwnd, ID_TIMER_PROGRESS, 100, nullptr);
+    if (has(L"\"select\"")) { g_selected = (int)numv(L"\"i\""); return; }
+
+    if (has(L"\"delete\"")) {
+        int i = (int)numv(L"\"i\"");
+        if (i>=0 && i<(int)g_filtered.size()) {
+            auto it = std::find(g_library.begin(), g_library.end(),
+                [&](const LibEntry& e){ return &e == g_filtered[i]; });
+            // Remove by path match
+            auto path = g_filtered[i]->path;
+            g_library.erase(std::remove_if(g_library.begin(), g_library.end(),
+                [&](const LibEntry& e){ return e.path==path; }), g_library.end());
+            saveLib();
+            pushLibrary(L"");
+        }
+        return;
+    }
+
+    if (has(L"\"play\"")) {
+        if (g_player->isRunning()) {
+            if (g_player->isPaused()) { g_player->resume(); jsCall(L"setPlaying",L"true"); }
+            else                      { g_player->pause();  jsCall(L"setPlaying",L"false"); }
+        } else startPlaying();
+        return;
+    }
+
+    if (has(L"\"stop\"")) {
+        KillTimer(g_hwnd, TID_PROGRESS); KillTimer(g_hwnd, TID_MIDI);
+        g_player->stop();
+        if (g_midiIn) { g_midiIn->closePort(); g_midiIn.reset(); }
+        resetModifiers();
+        jsCall(L"setPlaying", L"false");
+        jsCall(L"progress",   L"0,0");
+        jsCall(L"status",     L"'Stopped.'");
+        return;
+    }
+
+    if (has(L"\"restart\"")) {
+        if (g_player->isRunning()) g_player->seek(0.0); else startPlaying(); return;
+    }
+    if (has(L"\"rewind\""))  { g_player->seek(std::max(0.0, g_player->getPosition()-10.0)); return; }
+    if (has(L"\"forward\"")) {
+        double dur=g_player->getDuration(), pos=g_player->getPosition();
+        g_player->seek(std::min(pos+10.0, dur>0?dur-0.1:pos+10.0)); return;
+    }
+    if (has(L"\"seek\""))  { double dur=g_player->getDuration(); if(dur>0) g_player->seek(numv(L"\"v\"")*dur); return; }
+    if (has(L"\"speed\"")) { g_player->setSpeed(numv(L"\"v\"")); return; }
+
+    if (has(L"\"live\"")) {
+        int idx = (int)numv(L"\"i\"");
+        if (idx<0 || idx>=(int)g_deviceNames.size()) { jsCall(L"status",L"'No MIDI device selected.'"); return; }
+        try {
+            g_midiIn = std::make_unique<RtMidiIn>();
+            g_midiIn->openPort((unsigned int)idx);
+            g_midiIn->ignoreTypes(true,true,true);
+        } catch (const std::exception& e) {
+            jsCall(L"status", L"'Error: " + jsEsc(toWide(e.what())) + L"'");
+            g_midiIn.reset(); return;
+        }
+        jsCall(L"status", L"'Live — play your keyboard!'");
+        SetTimer(g_hwnd, TID_MIDI, 8, nullptr);
+        return;
+    }
 }
 
-// ─── Control factory helpers ──────────────────────────────────────────────────
-
-static HWND mkBtn(HWND p, const wchar_t* t, int x, int y, int w, int h, int id) {
-    return CreateWindowW(L"BUTTON", t,
-        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        x, y, w, h, p, (HMENU)(INT_PTR)id, nullptr, nullptr);
-}
-
-static HWND mkStatic(HWND p, const wchar_t* t, int x, int y, int w, int h, int id, DWORD xStyle = 0) {
-    return CreateWindowW(L"STATIC", t,
-        WS_CHILD | WS_VISIBLE | SS_CENTER | xStyle,
-        x, y, w, h, p, (HMENU)(INT_PTR)id, nullptr, nullptr);
-}
-
-static HWND mkTrack(HWND p, int x, int y, int w, int h, int id, int mn, int mx, int val) {
-    HWND tb = CreateWindowW(TRACKBAR_CLASSW, L"",
-        WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_NOTICKS,
-        x, y, w, h, p, (HMENU)(INT_PTR)id, nullptr, nullptr);
-    SendMessage(tb, TBM_SETRANGE, TRUE, MAKELPARAM(mn, mx));
-    SendMessage(tb, TBM_SETPOS,   TRUE, val);
-    return tb;
-}
-
-static void setFont(HWND h, HFONT f) { SendMessage(h, WM_SETFONT, (WPARAM)f, TRUE); }
-
-// ─── Window procedure ─────────────────────────────────────────────────────────
+// ─── WndProc ──────────────────────────────────────────────────────────────────
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
-
-    case WM_CREATE:
-        DragAcceptFiles(hwnd, TRUE);
+    case WM_SIZE:
+        if (g_wvc) { RECT r; GetClientRect(hwnd,&r); g_wvc->put_Bounds(r); }
         break;
 
     case WM_TIMER:
-        if (wp == ID_TIMER_PROGRESS && g_player->isRunning()) {
-            double pos = g_player->getPosition();
-            double dur = g_player->getDuration();
-            if (dur > 0) {
-                SendMessage(GetDlgItem(hwnd, ID_PROGRESS), TBM_SETPOS, TRUE, (LPARAM)(int)(pos / dur * 1000));
-                SetDlgItemTextW(hwnd, ID_ELAPSED, fmtDur(pos).c_str());
-            }
+        if (wp==TID_PROGRESS && g_player->isRunning()) {
+            double pos=g_player->getPosition(), dur=g_player->getDuration();
+            wchar_t s[128]; swprintf_s(s, L"window.snuf.progress(%f,%f)", pos, dur);
+            jsExec(s);
         }
-        if (wp == ID_TIMER_MIDI && g_midiIn) {
+        if (wp==TID_MIDI && g_midiIn) {
             g_midiIn->getMessage(&g_midiMsg);
-            if (g_midiMsg.size() >= 3) {
-                uint8_t type = g_midiMsg[0] & 0xF0;
-                uint8_t note = g_midiMsg[1];
-                uint8_t vel  = g_midiMsg[2];
+            if (g_midiMsg.size()>=3) {
+                uint8_t type=g_midiMsg[0]&0xF0, note=g_midiMsg[1], vel=g_midiMsg[2];
                 auto key = RobloxKeyMapper::map((int)note);
                 if (key) {
-                    if (type == 0x90 && vel > 0) pressKey(*key);
-                    else if (type == 0x80 || (type == 0x90 && vel == 0)) releaseKey(*key);
+                    if (type==0x90&&vel>0) pressKey(*key);
+                    else if (type==0x80||(type==0x90&&vel==0)) releaseKey(*key);
                 }
             }
         }
         break;
 
-    case WM_USER + 1: {   // status string from player thread
-        auto* s = reinterpret_cast<std::wstring*>(lp);
-        setStatus(*s);
-        delete s;
+    case WM_USER+1: { auto* s=(std::wstring*)lp; jsCall(L"status",L"'"+jsEsc(*s)+L"'"); delete s; break; }
+    case WM_USER+2:
+        KillTimer(hwnd,TID_PROGRESS);
+        jsCall(L"setPlaying",L"false");
+        jsCall(L"progress",L"0,0");
+        jsCall(L"status",L"'Done!'");
         break;
-    }
-
-    case WM_USER + 2:     // playback finished
-        KillTimer(hwnd, ID_TIMER_PROGRESS);
-        SendMessage(GetDlgItem(hwnd, ID_PROGRESS), TBM_SETPOS, TRUE, 0);
-        SetDlgItemTextW(hwnd, ID_ELAPSED, L"0:00");
-        SetDlgItemTextW(hwnd, ID_PLAYPAUSE, L"Play"); // ▶
-        break;
-
-    case WM_DROPFILES: {
-        HDROP hDrop = (HDROP)wp;
-        wchar_t path[MAX_PATH] = {};
-        if (DragQueryFileW(hDrop, 0, path, MAX_PATH)) {
-            addFile(path);
-            SetDlgItemTextW(hwnd, ID_SEARCH, L"");
-            filterLibrary(L"");
-        }
-        DragFinish(hDrop);
-        break;
-    }
-
-    case WM_HSCROLL: {
-        HWND ctrl = (HWND)lp;
-        if (ctrl == GetDlgItem(hwnd, ID_PROGRESS)) {
-            double dur = g_player->getDuration();
-            if (dur > 0) {
-                int pos = (int)SendMessage(ctrl, TBM_GETPOS, 0, 0);
-                double t = pos / 1000.0 * dur;
-                g_player->seek(t);
-                SetDlgItemTextW(hwnd, ID_ELAPSED, fmtDur(t).c_str());
-            }
-        }
-        if (ctrl == GetDlgItem(hwnd, ID_SPEED_SLD)) {
-            int pos = (int)SendMessage(ctrl, TBM_GETPOS, 0, 0);
-            double sp = 0.25 + pos / 100.0 * 1.75;
-            g_player->setSpeed(sp);
-            wchar_t buf[16];
-            swprintf_s(buf, L"%.2fx", sp); // ×
-            SetDlgItemTextW(hwnd, ID_SPEED_LBL, buf);
-        }
-        break;
-    }
-
-    case WM_COMMAND:
-        switch (LOWORD(wp)) {
-
-        case ID_BROWSE: {
-            wchar_t path[MAX_PATH] = {};
-            OPENFILENAMEW ofn = {};
-            ofn.lStructSize = sizeof(ofn);
-            ofn.hwndOwner   = hwnd;
-            ofn.lpstrFilter = L"MIDI Files\0*.mid;*.midi\0All Files\0*.*\0";
-            ofn.lpstrFile   = path;
-            ofn.nMaxFile    = MAX_PATH;
-            ofn.Flags       = OFN_FILEMUSTEXIST;
-            if (GetOpenFileNameW(&ofn)) {
-                addFile(path);
-                SetDlgItemTextW(hwnd, ID_SEARCH, L"");
-                filterLibrary(L"");
-            }
-            break;
-        }
-
-        case ID_SEARCH:
-            if (HIWORD(wp) == EN_CHANGE) {
-                wchar_t buf[256] = {};
-                GetDlgItemTextW(hwnd, ID_SEARCH, buf, 256);
-                filterLibrary(buf);
-            }
-            break;
-
-        case ID_LIBRARY:
-            if (HIWORD(wp) == LBN_SELCHANGE)
-                g_selected = (int)SendMessage(GetDlgItem(hwnd, ID_LIBRARY), LB_GETCURSEL, 0, 0);
-            if (HIWORD(wp) == LBN_DBLCLK) {
-                g_player->stop();
-                KillTimer(hwnd, ID_TIMER_PROGRESS);
-                startPlaying();
-            }
-            break;
-
-        case ID_PLAYPAUSE:
-            if (g_player->isRunning()) {
-                if (g_player->isPaused()) {
-                    g_player->resume();
-                    SetDlgItemTextW(hwnd, ID_PLAYPAUSE, L"Pause");
-                } else {
-                    g_player->pause();
-                    SetDlgItemTextW(hwnd, ID_PLAYPAUSE, L"Play");
-                }
-            } else {
-                startPlaying();
-            }
-            break;
-
-        case ID_STOP:
-            KillTimer(hwnd, ID_TIMER_PROGRESS);
-            KillTimer(hwnd, ID_TIMER_MIDI);
-            g_player->stop();
-            if (g_midiIn) { g_midiIn->closePort(); g_midiIn.reset(); }
-            resetModifiers();
-            SendMessage(GetDlgItem(hwnd, ID_PROGRESS), TBM_SETPOS, TRUE, 0);
-            SetDlgItemTextW(hwnd, ID_ELAPSED,   L"0:00");
-            SetDlgItemTextW(hwnd, ID_PLAYPAUSE, L"Play");
-            setStatus(L"Stopped.");
-            break;
-
-        case ID_RESTART:
-            if (g_player->isRunning()) g_player->seek(0.0);
-            else startPlaying();
-            break;
-
-        case ID_REWIND:
-            g_player->seek(std::max(0.0, g_player->getPosition() - 10.0));
-            break;
-
-        case ID_FWD: {
-            double dur = g_player->getDuration();
-            double pos = g_player->getPosition();
-            g_player->seek(std::min(pos + 10.0, dur > 0 ? dur - 0.1 : pos + 10.0));
-            break;
-        }
-
-        case ID_REFRESH:
-            populateDevices();
-            break;
-
-        case ID_LIVE: {
-            int idx = (int)SendMessage(GetDlgItem(hwnd, ID_DEVICE_CMB), CB_GETCURSEL, 0, 0);
-            if (idx < 0) { setStatus(L"No MIDI device selected."); break; }
-            try {
-                g_midiIn = std::make_unique<RtMidiIn>();
-                g_midiIn->openPort((unsigned int)idx);
-                g_midiIn->ignoreTypes(true, true, true);
-            } catch (const std::exception& e) {
-                setStatus(std::string("Error: ") + e.what());
-                g_midiIn.reset();
-                break;
-            }
-            setStatus(L"Live — play your keyboard!");
-            SetTimer(hwnd, ID_TIMER_MIDI, 8, nullptr);
-            break;
-        }
-
-        } // switch LOWORD(wp)
-        break;
-
-    // ── Custom coloring ───────────────────────────────────────────────────────
-    case WM_CTLCOLORSTATIC: {
-        HDC dc = (HDC)wp;
-        int id = GetDlgCtrlID((HWND)lp);
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, id == ID_SPEED_LBL ? RGB(0x27, 0xA8, 0xD4)
-                       : id == ID_STATUS     ? RGB(0x88, 0x70, 0x60)
-                                             : clrText());
-        return (LRESULT)g_brWin;
-    }
-
-    case WM_CTLCOLOREDIT:
-        SetTextColor((HDC)wp, clrText());
-        SetBkColor((HDC)wp, clrInput());
-        return (LRESULT)g_brInput;
-
-    case WM_CTLCOLORLISTBOX:
-        SetTextColor((HDC)wp, clrText());
-        SetBkColor((HDC)wp, clrInput());
-        return (LRESULT)g_brInput;
-
-    case WM_CTLCOLORBTN:
-        return (LRESULT)g_brWin;
-
-    case WM_ERASEBKGND: {
-        HDC dc = (HDC)wp;
-        RECT rc;
-        GetClientRect(hwnd, &rc);
-        FillRect(dc, &rc, g_brWin);
-        RECT bar = { 0, 0, rc.right, 52 };
-        FillRect(dc, &bar, g_brBar);
-        // separator line
-        HPEN pen = CreatePen(PS_SOLID, 1, RGB(0xCC, 0xCC, 0xCC));
-        HPEN old = (HPEN)SelectObject(dc, pen);
-        MoveToEx(dc, 20, 52, nullptr);
-        LineTo(dc, rc.right - 20, 52);
-        SelectObject(dc, old);
-        DeleteObject(pen);
-        return 1;
-    }
 
     case WM_DESTROY:
-        KillTimer(hwnd, ID_TIMER_PROGRESS);
-        KillTimer(hwnd, ID_TIMER_MIDI);
-        g_player->stop();
-        PostQuitMessage(0);
-        break;
+        KillTimer(hwnd,TID_PROGRESS); KillTimer(hwnd,TID_MIDI);
+        g_player->stop(); PostQuitMessage(0); break;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
-}
-
-// ─── Build controls ───────────────────────────────────────────────────────────
-
-static void createControls(HWND hwnd) {
-    g_fontTitle = CreateFontW(-18, 0, 0, 0, FW_BOLD,   0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_fontBold  = CreateFontW(-13, 0, 0, 0, FW_SEMIBOLD,0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_fontNorm  = CreateFontW(-12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_fontSm    = CreateFontW(-10, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-
-    // Title bar area
-    HWND hTit = mkStatic(hwnd, L"Snuffiano", 20, 14, 200, 26, 0, SS_LEFT);
-    setFont(hTit, g_fontTitle);
-    HWND hCred = mkStatic(hwnd, L"Created by ZenPhyx", 20, 18, 420, 14, 0, SS_RIGHT);
-    setFont(hCred, g_fontSm);
-
-    // Browse
-    HWND hBrowse = mkBtn(hwnd, L"Browse MIDI File...", 20, 60, 420, 36, ID_BROWSE);
-    setFont(hBrowse, g_fontBold);
-
-    // Library header
-    HWND hLibHdr = mkStatic(hwnd, L"LIBRARY", 20, 104, 80, 14, 0, SS_LEFT);
-    setFont(hLibHdr, g_fontSm);
-
-    // Search
-    HWND hSearch = CreateWindowW(L"EDIT", L"",
-        WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-        20, 122, 420, 24, hwnd, (HMENU)ID_SEARCH, nullptr, nullptr);
-    SendMessage(hSearch, EM_SETCUEBANNER, 0, (LPARAM)L"Search songs…");
-    setFont(hSearch, g_fontNorm);
-
-    // Library list
-    HWND hLib = CreateWindowW(L"LISTBOX", L"",
-        WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
-        20, 150, 420, 130, hwnd, (HMENU)ID_LIBRARY, nullptr, nullptr);
-    setFont(hLib, g_fontNorm);
-
-    // Progress times
-    HWND hEl = mkStatic(hwnd, L"0:00", 20, 287, 50, 14, ID_ELAPSED, SS_LEFT);
-    setFont(hEl, g_fontSm);
-    HWND hTot = mkStatic(hwnd, L"0:00", 390, 287, 50, 14, ID_TOTAL, SS_RIGHT);
-    setFont(hTot, g_fontSm);
-
-    // Progress slider
-    mkTrack(hwnd, 20, 303, 420, 22, ID_PROGRESS, 0, 1000, 0);
-
-    // Transport
-    int ty = 332;
-    HWND hRes = mkBtn(hwnd, L"|<",  20,  ty, 52, 34, ID_RESTART);  setFont(hRes, g_fontBold);
-    HWND hRew = mkBtn(hwnd, L"<< 10s", 76, ty, 60, 34, ID_REWIND); setFont(hRew, g_fontBold);
-    HWND hPP  = mkBtn(hwnd, L"Play",  148, ty-4, 72, 42, ID_PLAYPAUSE); setFont(hPP,  g_fontTitle);
-    HWND hFwd = mkBtn(hwnd, L"10s >>", 224, ty, 60, 34, ID_FWD);  setFont(hFwd, g_fontBold);
-    HWND hStp = mkBtn(hwnd, L"Stop",  288, ty, 52, 34, ID_STOP);   setFont(hStp, g_fontBold);
-    (void)hRes; (void)hRew; (void)hPP; (void)hFwd; (void)hStp;
-
-    // Speed row
-    HWND hSpLbl = mkStatic(hwnd, L"Speed", 20, 385, 46, 14, 0, SS_LEFT);
-    setFont(hSpLbl, g_fontSm);
-    mkTrack(hwnd, 70, 381, 310, 22, ID_SPEED_SLD, 0, 100, 43);
-    HWND hSpVal = mkStatic(hwnd, L"1.00×", 384, 385, 56, 14, ID_SPEED_LBL, SS_RIGHT);
-    setFont(hSpVal, g_fontSm);
-
-    // "or" label
-    HWND hOr = mkStatic(hwnd, L"-- or use a MIDI keyboard --", 20, 415, 420, 14, 0);
-    setFont(hOr, g_fontSm);
-
-    // Device row
-    HWND hDLbl = mkStatic(hwnd, L"MIDI Keyboard:", 20, 437, 104, 18, 0, SS_LEFT);
-    setFont(hDLbl, g_fontNorm);
-    HWND hDev = CreateWindowW(L"COMBOBOX", L"",
-        WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
-        128, 435, 262, 200, hwnd, (HMENU)ID_DEVICE_CMB, nullptr, nullptr);
-    setFont(hDev, g_fontNorm);
-    HWND hRef = mkBtn(hwnd, L"↺", 394, 435, 46, 24, ID_REFRESH);
-    setFont(hRef, g_fontNorm);
-
-    // Live mode
-    HWND hLive = mkBtn(hwnd, L"Live Mode", 20, 467, 420, 38, ID_LIVE);
-    setFont(hLive, g_fontBold);
-
-    // Status
-    HWND hSt = mkStatic(hwnd, L"Drop a MIDI file or pick one from your library", 20, 513, 420, 16, ID_STATUS);
-    setFont(hSt, g_fontNorm);
-
-    // A11y note
-    HWND hA = mkStatic(hwnd, L"Accessibility: run Snuffiano.exe as administrator if keys don't inject", 20, 533, 420, 14, 0);
-    setFont(hA, g_fontSm);
 }
 
 // ─── WinMain ──────────────────────────────────────────────────────────────────
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
-    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES };
-    InitCommonControlsEx(&icc);
-
     g_player = std::make_unique<MIDIPlayer>();
-    loadLibrary();
-    updateBrushes();
+    loadLib();
 
-    WNDCLASSW wc    = {};
-    wc.lpfnWndProc  = WndProc;
-    wc.hInstance    = hInst;
-    wc.lpszClassName = L"SnuffianoWnd";
-    wc.hCursor      = LoadCursor(nullptr, IDC_ARROW);
-    wc.hIcon        = LoadIcon(hInst, MAKEINTRESOURCE(1));
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    WNDCLASSW wc={};
+    wc.lpfnWndProc=WndProc; wc.hInstance=hInst;
+    wc.lpszClassName=L"SnuffianoWnd";
+    wc.hCursor=LoadCursor(nullptr,IDC_ARROW);
+    wc.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);
     RegisterClassW(&wc);
 
     g_hwnd = CreateWindowExW(0, L"SnuffianoWnd", L"Snuffiano",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 472, 580,
-        nullptr, nullptr, hInst, nullptr);
+        WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,
+        CW_USEDEFAULT,CW_USEDEFAULT,462,648,
+        nullptr,nullptr,hInst,nullptr);
 
-    createControls(g_hwnd);
-    populateDevices();
-    filterLibrary(L"");
+    // Convert embedded HTML (UTF-8) → wide string for WebView2
+    int n = MultiByteToWideChar(CP_UTF8,0,HTML_UI,-1,nullptr,0);
+    std::wstring html(n,0);
+    MultiByteToWideChar(CP_UTF8,0,HTML_UI,-1,html.data(),n);
+    if (!html.empty()&&html.back()==0) html.pop_back();
 
-    ShowWindow(g_hwnd, SW_SHOWNORMAL);
+    CreateCoreWebView2EnvironmentWithOptions(nullptr,nullptr,nullptr,
+        Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
+        [html](HRESULT, ICoreWebView2Environment* env) -> HRESULT {
+            env->CreateCoreWebView2Controller(g_hwnd,
+                Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+                [html](HRESULT, ICoreWebView2Controller* ctrl) -> HRESULT {
+                    g_wvc = ctrl;
+                    ctrl->get_CoreWebView2(&g_wv);
+                    RECT r; GetClientRect(g_hwnd,&r); ctrl->put_Bounds(r);
+
+                    ComPtr<ICoreWebView2Settings> cfg;
+                    g_wv->get_Settings(&cfg);
+                    cfg->put_AreDefaultContextMenusEnabled(FALSE);
+                    cfg->put_AreDevToolsEnabled(FALSE);
+
+                    EventRegistrationToken tok;
+                    g_wv->add_WebMessageReceived(
+                        Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                        [](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+                            LPWSTR msg=nullptr;
+                            args->TryGetWebMessageAsString(&msg);
+                            if (msg) { onMsg(msg); CoTaskMemFree(msg); }
+                            return S_OK;
+                        }).Get(), &tok);
+
+                    g_wv->NavigateToString(html.c_str());
+                    return S_OK;
+                }).Get());
+            return S_OK;
+        }).Get());
+
+    ShowWindow(g_hwnd,SW_SHOWNORMAL);
     UpdateWindow(g_hwnd);
 
     MSG msg;
-    while (GetMessageW(&msg, nullptr, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
+    while (GetMessageW(&msg,nullptr,0,0)) {
+        TranslateMessage(&msg); DispatchMessageW(&msg);
     }
-
-    DeleteObject(g_brWin); DeleteObject(g_brBar); DeleteObject(g_brInput);
-    DeleteObject(g_fontTitle); DeleteObject(g_fontBold);
-    DeleteObject(g_fontNorm);  DeleteObject(g_fontSm);
     return 0;
 }
