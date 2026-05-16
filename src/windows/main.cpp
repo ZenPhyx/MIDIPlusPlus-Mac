@@ -20,6 +20,7 @@
 #include "MIDIPlayer.hpp"
 #include "RobloxKeyMapper.hpp"
 #include "InputInjector.hpp"
+#include "NtUserInput.h"
 #include "RtMidi.h"
 
 #pragma comment(lib, "winmm.lib")
@@ -461,6 +462,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     // WebView2 uses COM — must be initialized before CreateCoreWebView2EnvironmentWithOptions
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
+    // Set up direct NT syscall for input injection (bypasses API hooks, same as MIDI++)
+    InitializeNtUserSendInputCall();
 
     g_player = std::make_unique<MIDIPlayer>();
     loadLib();

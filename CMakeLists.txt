@@ -27,10 +27,12 @@ if(WIN32)
         ${CORE_SOURCES}
         src/windows/main.cpp
         src/windows/WinInputInjector.cpp
+        src/windows/NtUserInput.cpp
     )
 
     target_include_directories(Snuffiano PRIVATE
         include
+        src/windows
         "${wv2_SOURCE_DIR}/build/native/include"
     )
     target_compile_definitions(Snuffiano PRIVATE __WINDOWS_MM__ UNICODE _UNICODE)

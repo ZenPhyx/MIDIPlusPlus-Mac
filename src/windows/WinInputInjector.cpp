@@ -1,6 +1,6 @@
 #include "InputInjector.hpp"
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include "NtUserInput.h"
+#include <atomic>
 #include <unordered_map>
 
 // White keys — hardware scan codes, no modifier needed.
@@ -14,9 +14,7 @@ static const std::unordered_map<char, WORD> BASE_SCAN = {
     {'6',0x07},{'7',0x08},{'8',0x09},{'9',0x0A},{'0',0x0B},
 };
 
-// Black keys — same scan code as the matching white key, but sent with Left Shift.
-// Roblox uses Enum.KeyCode (hardware scan codes), so KEYEVENTF_UNICODE won't work.
-// This is the same approach as the original Windows MIDI++ project.
+// Black keys — same scan code as the matching white key, but need Left Shift.
 static const std::unordered_map<char, WORD> SHIFT_SCAN = {
     {'Q',0x10},{'W',0x11},{'E',0x12},{'T',0x14},{'Y',0x15},
     {'I',0x17},{'O',0x18},{'P',0x19},
@@ -26,50 +24,70 @@ static const std::unordered_map<char, WORD> SHIFT_SCAN = {
     {'^',0x07},{'*',0x09},{'(',0x0A},
 };
 
-static const WORD LSHIFT = 0x2A;  // Left Shift scan code
+static const WORD LSHIFT = 0x2A;
+
+// Reference count: how many currently-held notes require Left Shift.
+// Shift goes down on 0→1 transition, up on 1→0 transition.
+// This prevents shift from being released prematurely when multiple
+// black keys overlap (e.g. holding A♭ while pressing B♭).
+static std::atomic<int> g_shiftUsers{0};
 
 static INPUT makeScan(WORD scan, bool down) {
-    INPUT in = {};
-    in.type = INPUT_KEYBOARD;
-    in.ki.wScan = scan;
+    INPUT in{};
+    in.type       = INPUT_KEYBOARD;
+    in.ki.wScan   = scan;
     in.ki.dwFlags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
     return in;
+}
+
+static void sendOne(WORD scan, bool down) {
+    INPUT in = makeScan(scan, down);
+    NtUserSendInputCall(1, &in, sizeof(INPUT));
+}
+
+static void sendTwo(WORD scan0, bool down0, WORD scan1, bool down1) {
+    INPUT inp[2] = { makeScan(scan0, down0), makeScan(scan1, down1) };
+    NtUserSendInputCall(2, inp, sizeof(INPUT));
 }
 
 void pressKey(char key) {
     auto sit = SHIFT_SCAN.find(key);
     if (sit != SHIFT_SCAN.end()) {
-        // Shift down then key down — sent as one atomic batch
-        INPUT inp[2] = { makeScan(LSHIFT, true), makeScan(sit->second, true) };
-        SendInput(2, inp, sizeof(INPUT));
+        int prev = g_shiftUsers.fetch_add(1);
+        if (prev == 0) {
+            // First black key down — send shift+key together
+            sendTwo(LSHIFT, true, sit->second, true);
+        } else {
+            // Shift is already held — just send the key
+            sendOne(sit->second, true);
+        }
         return;
     }
     auto bit = BASE_SCAN.find(key);
-    if (bit != BASE_SCAN.end()) {
-        INPUT in = makeScan(bit->second, true);
-        SendInput(1, &in, sizeof(INPUT));
-    }
+    if (bit != BASE_SCAN.end()) sendOne(bit->second, true);
 }
 
 void releaseKey(char key) {
     auto sit = SHIFT_SCAN.find(key);
     if (sit != SHIFT_SCAN.end()) {
-        // Key up then shift up
-        INPUT inp[2] = { makeScan(sit->second, false), makeScan(LSHIFT, false) };
-        SendInput(2, inp, sizeof(INPUT));
+        int prev = g_shiftUsers.fetch_sub(1);
+        if (prev <= 1) {
+            // Last black key up — release key+shift together
+            sendTwo(sit->second, false, LSHIFT, false);
+            g_shiftUsers.store(0);  // clamp negative on double-release
+        } else {
+            // Other black keys still held — just release this key
+            sendOne(sit->second, false);
+        }
         return;
     }
     auto bit = BASE_SCAN.find(key);
-    if (bit != BASE_SCAN.end()) {
-        INPUT in = makeScan(bit->second, false);
-        SendInput(1, &in, sizeof(INPUT));
-    }
+    if (bit != BASE_SCAN.end()) sendOne(bit->second, false);
 }
 
 void tapKey(char key) { pressKey(key); releaseKey(key); }
 
 void resetModifiers() {
-    // Force shift up in case it got stuck
-    INPUT in = makeScan(LSHIFT, false);
-    SendInput(1, &in, sizeof(INPUT));
+    g_shiftUsers.store(0);
+    sendOne(LSHIFT, false);
 }
