@@ -64,6 +64,33 @@ static MidiFile parseMidi(const std::string& path) {
     return parser.parse(p);
 }
 
+// Map a piano key character to its base scan-code identity (case-insensitive,
+// symbols mapped back to their number key). Two keys conflict when they share
+// the same physical key on the keyboard — e.g. 'c' and 'C', '1' and '!'.
+static char keyBase(char k) {
+    if (k >= 'A' && k <= 'Z') return (char)(k - 'A' + 'a');
+    if (k == '!') return '1'; if (k == '@') return '2';
+    if (k == '$') return '4'; if (k == '%') return '5';
+    if (k == '^') return '6'; if (k == '*') return '8';
+    if (k == '(') return '9';
+    return k;
+}
+
+#ifdef _WIN32
+// On Windows, keys that share a scan code (e.g. 'c' and 'C') cannot be held
+// simultaneously. When two notes at the same timestamp conflict, stagger the
+// second one by 15 ms — inaudible to humans, but both notes play correctly.
+static void staggerConflicts(std::vector<TimedNote>& tl) {
+    for (size_t i = 0; i + 1 < tl.size(); ++i) {
+        if (tl[i].us == tl[i+1].us && keyBase(tl[i].key) == keyBase(tl[i+1].key))
+            tl[i+1].us += 15000;
+    }
+    std::sort(tl.begin(), tl.end(), [](const TimedNote& a, const TimedNote& b){
+        return a.us < b.us;
+    });
+}
+#endif
+
 static bool countdown(std::atomic<bool>& running, MIDIPlayer::StatusCallback cb) {
     for (int i = 3; i > 0; --i) {
         if (!running) return false;
@@ -155,6 +182,10 @@ void MIDIPlayer::playFile(const std::string& path,
 
         double dur = timeline.back().us / 1e6;
         m_duration.store(dur);
+
+#ifdef _WIN32
+        staggerConflicts(timeline);
+#endif
 
         std::string info = std::to_string(timeline.size()) + " notes";
         if (shift) info += "  (transposed " + (shift > 0 ? std::string("+") : "") + std::to_string(shift) + ")";
