@@ -1,7 +1,7 @@
 #import "MainViewController.h"
 #include "MIDIPlayer.hpp"
 #include "RobloxKeyMapper.hpp"
-#include "MacInputInjector.hpp"
+#include "InputInjector.hpp"
 #include "RtMidi.h"
 #import <dispatch/dispatch.h>
 #import <memory>

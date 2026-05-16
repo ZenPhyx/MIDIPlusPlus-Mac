@@ -1,7 +1,7 @@
 #include "MIDIPlayer.hpp"
 #include "midi_parser.h"
 #include "RobloxKeyMapper.hpp"
-#include "MacInputInjector.hpp"
+#include "InputInjector.hpp"
 
 #include <algorithm>
 #include <chrono>

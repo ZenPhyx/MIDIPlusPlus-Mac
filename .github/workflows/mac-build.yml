@@ -1,10 +1,11 @@
-name: Build Mac App
+name: Build Snuffiano
 
 on:
   push:
   workflow_dispatch:
 
 jobs:
+  # ── macOS ────────────────────────────────────────────────────────────────────
   build-mac:
     runs-on: macos-latest
     permissions:
@@ -33,29 +34,53 @@ jobs:
             echo "ICON_FLAG=" >> $GITHUB_ENV
           fi
 
-      - name: Configure
+      - name: Configure & build
         run: |
-          mkdir -p build
-          cd build
-          cmake .. $ICON_FLAG
-
-      - name: Build
-        run: |
-          cd build
-          make
+          cmake -B build $ICON_FLAG
+          cmake --build build
 
       - name: Package
         run: |
           codesign --force --deep --sign - build/Snuffiano.app
-          cd build
-          zip -r Snuffiano.zip Snuffiano.app
+          cd build && zip -r Snuffiano-macOS.zip Snuffiano.app
 
-      - name: Publish latest release
+      - name: Create release and upload macOS build
         run: |
           gh release delete latest --cleanup-tag --yes 2>/dev/null || true
-          gh release create latest build/Snuffiano.zip \
-            --title "Snuffiano (macOS)" \
-            --notes "Double-click Snuffiano.app to open. First launch: right-click → Open to bypass Gatekeeper. Then add Terminal to Accessibility in System Settings → Privacy & Security." \
+          gh release create latest build/Snuffiano-macOS.zip \
+            --title "Snuffiano" \
+            --notes "## Download
+
+**macOS:** Download \`Snuffiano-macOS.zip\`, unzip, right-click → Open to bypass Gatekeeper.
+Then add Terminal to Accessibility: System Settings → Privacy & Security → Accessibility.
+
+**Windows:** Download \`Snuffiano-Windows.zip\`, unzip, run \`Snuffiano.exe\`." \
             --latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Windows ──────────────────────────────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    needs: build-mac          # wait so the release already exists
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure & build
+        run: |
+          cmake -B build -A x64
+          cmake --build build --config Release
+
+      - name: Package
+        run: |
+          New-Item -ItemType Directory -Force build\pkg
+          Copy-Item build\Release\Snuffiano.exe build\pkg\
+          Compress-Archive -Path build\pkg\* -DestinationPath build\Snuffiano-Windows.zip
+
+      - name: Upload Windows build to release
+        run: gh release upload latest build/Snuffiano-Windows.zip --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
