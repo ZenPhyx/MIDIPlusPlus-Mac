@@ -320,8 +320,7 @@ static NSButton* makeButton(NSString* title, NSColor* color, id target, SEL acti
 
 - (void)liveMode:(id)sender {
     NSInteger idx = self.devicePicker.indexOfSelectedItem;
-    RtMidiIn probe;
-    if ((unsigned int)idx >= probe.getPortCount()) {
+    if (idx < 0) {
         [self setStatus:@"No MIDI device selected."];
         return;
     }

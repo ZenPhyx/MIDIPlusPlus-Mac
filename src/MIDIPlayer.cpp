@@ -150,35 +150,35 @@ void MIDIPlayer::startLive(unsigned int   portIndex,
     m_running = true;
 
     m_thread = std::thread([this, portIndex, onKey, onStatus, onDone]() {
-        RtMidiIn midi;
         try {
+            RtMidiIn midi;
             midi.openPort(portIndex);
-        } catch (const RtMidiError& e) {
-            onStatus("Error: " + e.getMessage());
-            onDone();
-            return;
-        }
-        midi.ignoreTypes(true, true, true);
+            midi.ignoreTypes(true, true, true);
 
-        if (!countdown(m_running, onStatus)) {
-            midi.closePort();
-            onDone();
-            return;
-        }
+            if (!countdown(m_running, onStatus)) {
+                midi.closePort();
+                onDone();
+                return;
+            }
 
-        onStatus("Live \xe2\x80\x94 play your keyboard!");
+            onStatus("Live \xe2\x80\x94 play your keyboard!");
 
-        std::vector<unsigned char> msg;
-        while (m_running) {
-            midi.getMessage(&msg);
-            if (msg.size() >= 3 && (msg[0] & 0xF0) == 0x90 && msg[2] > 0) {
-                auto key = RobloxKeyMapper::map(static_cast<int>(msg[1]));
-                if (key) onKey(*key);
+            std::vector<unsigned char> msg;
+            while (m_running) {
+                midi.getMessage(&msg);
+                if (msg.size() >= 3 && (msg[0] & 0xF0) == 0x90 && msg[2] > 0) {
+                    auto key = RobloxKeyMapper::map(static_cast<int>(msg[1]));
+                    if (key) onKey(*key);
             }
             std::this_thread::sleep_for(std::chrono::microseconds(200));
         }
 
-        midi.closePort();
+            midi.closePort();
+        } catch (const RtMidiError& e) {
+            onStatus("Error: " + e.getMessage());
+        } catch (const std::exception& e) {
+            onStatus(std::string("Error: ") + e.what());
+        }
         onDone();
     });
 }
