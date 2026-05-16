@@ -59,3 +59,8 @@ void releaseKey(char key) {
 
 void tapKey(char key) { pressKey(key); releaseKey(key); }
 void resetModifiers() {}  // no real modifiers held — no-op
+
+// Phantom keycodes make scan-code conflicts impossible on Mac,
+// so live mode ownership is unnecessary — just delegate directly.
+void livePress(char key)   { pressKey(key); }
+void liveRelease(char key) { releaseKey(key); }

@@ -1,5 +1,6 @@
 #include "InputInjector.hpp"
 #include "NtUserInput.h"
+#include <array>
 #include <unordered_map>
 
 // White keys — hardware scan codes, no modifier.
@@ -82,4 +83,43 @@ void tapKey(char key) { pressKey(key); releaseKey(key); }
 void resetModifiers() {
     INPUT in = kbd(LSHIFT, SC_UP);
     NtUserSendInputCall(1, &in, sizeof(INPUT));
+}
+
+// ── Live-mode ownership ───────────────────────────────────────────────────────
+// Tracks which Roblox key character currently "owns" each scan code.
+// '\0' means the scan code is free.  When a new note needs a scan code that is
+// already owned by a different character, the owner is evicted first — exactly
+// matching MIDI++'s g_scancodeOwner / g_scancodeCount model.
+static std::array<char, 256> g_scanOwner{};
+
+static WORD scanOf(char key) {
+    auto sit = SHIFT_SCAN.find(key);
+    if (sit != SHIFT_SCAN.end()) return sit->second;
+    auto bit = BASE_SCAN.find(key);
+    if (bit != BASE_SCAN.end()) return bit->second;
+    return 0;
+}
+
+void livePress(char key) {
+    WORD scan = scanOf(key);
+    if (!scan) return;
+
+    char prev = g_scanOwner[scan];
+    if (prev && prev != key) {
+        // Evict the current owner so the new note can have the scan code
+        releaseKey(prev);
+    }
+    g_scanOwner[scan] = key;
+    pressKey(key);
+}
+
+void liveRelease(char key) {
+    WORD scan = scanOf(key);
+    if (!scan) return;
+
+    // Only release if this key is still the owner (it may have been evicted)
+    if (g_scanOwner[scan] == key) {
+        g_scanOwner[scan] = '\0';
+        releaseKey(key);
+    }
 }

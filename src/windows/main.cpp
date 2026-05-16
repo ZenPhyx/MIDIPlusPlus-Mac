@@ -442,8 +442,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 uint8_t type=g_midiMsg[0]&0xF0, note=g_midiMsg[1], vel=g_midiMsg[2];
                 auto key = RobloxKeyMapper::map((int)note);
                 if (key) {
-                    if (type==0x90&&vel>0) pressKey(*key);
-                    else if (type==0x80||(type==0x90&&vel==0)) releaseKey(*key);
+                    if (type==0x90&&vel>0) livePress(*key);
+                    else if (type==0x80||(type==0x90&&vel==0)) liveRelease(*key);
                 }
             }
         }
