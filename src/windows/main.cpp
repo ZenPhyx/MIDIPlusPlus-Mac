@@ -348,9 +348,6 @@ static void onMsg(const std::wstring& m) {
     if (has(L"\"delete\"")) {
         int i = (int)numv(L"\"i\"");
         if (i>=0 && i<(int)g_filtered.size()) {
-            auto it = std::find(g_library.begin(), g_library.end(),
-                [&](const LibEntry& e){ return &e == g_filtered[i]; });
-            // Remove by path match
             auto path = g_filtered[i]->path;
             g_library.erase(std::remove_if(g_library.begin(), g_library.end(),
                 [&](const LibEntry& e){ return e.path==path; }), g_library.end());
