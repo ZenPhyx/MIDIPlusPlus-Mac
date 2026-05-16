@@ -289,12 +289,20 @@ static void pushDevices() {
 
 // ─── Playback ─────────────────────────────────────────────────────────────────
 
+static void setAlwaysOnTop(bool on) {
+    SetWindowPos(g_hwnd, on ? HWND_TOPMOST : HWND_NOTOPMOST,
+                 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
 static void startPlaying() {
     if (g_selected<0 || g_selected>=(int)g_filtered.size()) {
         jsCall(L"status", L"'Select a song from the library first.'"); return;
     }
     KillTimer(g_hwnd, TID_PROGRESS);
     std::string path = toUtf8(g_filtered[g_selected]->path);
+
+    // Pin on top so user can see progress while Roblox has focus
+    setAlwaysOnTop(true);
 
     g_player->playFile(path,
         [](char key, bool press){ press ? pressKey(key) : releaseKey(key); },
@@ -370,6 +378,7 @@ static void onMsg(const std::wstring& m) {
         g_player->stop();
         if (g_midiIn) { g_midiIn->closePort(); g_midiIn.reset(); }
         resetModifiers();
+        setAlwaysOnTop(false);
         jsCall(L"setPlaying", L"false");
         jsCall(L"progress",   L"0,0");
         jsCall(L"status",     L"'Stopped.'");
@@ -434,6 +443,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_USER+1: { auto* s=(std::wstring*)lp; jsCall(L"status",L"'"+jsEsc(*s)+L"'"); delete s; break; }
     case WM_USER+2:
         KillTimer(hwnd,TID_PROGRESS);
+        setAlwaysOnTop(false);
         jsCall(L"setPlaying",L"false");
         jsCall(L"progress",L"0,0");
         jsCall(L"status",L"'Done!'");

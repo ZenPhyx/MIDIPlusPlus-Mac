@@ -3,7 +3,7 @@
 #include <windows.h>
 #include <unordered_map>
 
-// ── Normal keys: hardware scan codes (no shift needed) ───────────────────────
+// White keys — hardware scan codes, no modifier needed.
 static const std::unordered_map<char, WORD> BASE_SCAN = {
     {'a',0x1E},{'s',0x1F},{'d',0x20},{'f',0x21},{'g',0x22},{'h',0x23},
     {'j',0x24},{'k',0x25},{'l',0x26},{'z',0x2C},{'x',0x2D},{'c',0x2E},
@@ -14,47 +14,62 @@ static const std::unordered_map<char, WORD> BASE_SCAN = {
     {'6',0x07},{'7',0x08},{'8',0x09},{'9',0x0A},{'0',0x0B},
 };
 
-// ── Shifted piano keys: inject as Unicode characters so each gets its own
-//    independent slot in the OS input stream — 'd' (scan 0x20) and 'D'
-//    (unicode 0x44) can be held simultaneously without conflict.
-static const std::unordered_map<char, WORD> UNICODE_KEYS = {
-    {'Q',0x51},{'W',0x57},{'E',0x45},{'T',0x54},{'Y',0x59},
-    {'I',0x49},{'O',0x4F},{'P',0x50},
-    {'S',0x53},{'D',0x44},{'G',0x47},{'H',0x48},{'J',0x4A},{'L',0x4C},
-    {'Z',0x5A},{'C',0x43},{'V',0x56},{'B',0x42},
-    {'!',0x21},{'@',0x40},{'$',0x24},{'%',0x25},
-    {'^',0x5E},{'*',0x2A},{'(',0x28},
+// Black keys — same scan code as the matching white key, but sent with Left Shift.
+// Roblox uses Enum.KeyCode (hardware scan codes), so KEYEVENTF_UNICODE won't work.
+// This is the same approach as the original Windows MIDI++ project.
+static const std::unordered_map<char, WORD> SHIFT_SCAN = {
+    {'Q',0x10},{'W',0x11},{'E',0x12},{'T',0x14},{'Y',0x15},
+    {'I',0x17},{'O',0x18},{'P',0x19},
+    {'S',0x1F},{'D',0x20},{'G',0x22},{'H',0x23},{'J',0x24},{'L',0x26},
+    {'Z',0x2C},{'C',0x2E},{'V',0x2F},{'B',0x30},
+    {'!',0x02},{'@',0x03},{'$',0x05},{'%',0x06},
+    {'^',0x07},{'*',0x09},{'(',0x0A},
 };
 
-static void sendScan(WORD scan, bool down) {
-    INPUT in = {};
-    in.type       = INPUT_KEYBOARD;
-    in.ki.wScan   = scan;
-    in.ki.dwFlags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
-    SendInput(1, &in, sizeof(INPUT));
-}
+static const WORD LSHIFT = 0x2A;  // Left Shift scan code
 
-static void sendUnicode(WORD ch, bool down) {
+static INPUT makeScan(WORD scan, bool down) {
     INPUT in = {};
-    in.type       = INPUT_KEYBOARD;
-    in.ki.wScan   = ch;
-    in.ki.dwFlags = KEYEVENTF_UNICODE | (down ? 0 : KEYEVENTF_KEYUP);
-    SendInput(1, &in, sizeof(INPUT));
+    in.type = INPUT_KEYBOARD;
+    in.ki.wScan = scan;
+    in.ki.dwFlags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
+    return in;
 }
 
 void pressKey(char key) {
-    auto uit = UNICODE_KEYS.find(key);
-    if (uit != UNICODE_KEYS.end()) { sendUnicode(uit->second, true); return; }
+    auto sit = SHIFT_SCAN.find(key);
+    if (sit != SHIFT_SCAN.end()) {
+        // Shift down then key down — sent as one atomic batch
+        INPUT inp[2] = { makeScan(LSHIFT, true), makeScan(sit->second, true) };
+        SendInput(2, inp, sizeof(INPUT));
+        return;
+    }
     auto bit = BASE_SCAN.find(key);
-    if (bit != BASE_SCAN.end()) sendScan(bit->second, true);
+    if (bit != BASE_SCAN.end()) {
+        INPUT in = makeScan(bit->second, true);
+        SendInput(1, &in, sizeof(INPUT));
+    }
 }
 
 void releaseKey(char key) {
-    auto uit = UNICODE_KEYS.find(key);
-    if (uit != UNICODE_KEYS.end()) { sendUnicode(uit->second, false); return; }
+    auto sit = SHIFT_SCAN.find(key);
+    if (sit != SHIFT_SCAN.end()) {
+        // Key up then shift up
+        INPUT inp[2] = { makeScan(sit->second, false), makeScan(LSHIFT, false) };
+        SendInput(2, inp, sizeof(INPUT));
+        return;
+    }
     auto bit = BASE_SCAN.find(key);
-    if (bit != BASE_SCAN.end()) sendScan(bit->second, false);
+    if (bit != BASE_SCAN.end()) {
+        INPUT in = makeScan(bit->second, false);
+        SendInput(1, &in, sizeof(INPUT));
+    }
 }
 
 void tapKey(char key) { pressKey(key); releaseKey(key); }
-void resetModifiers()  {} // no physical modifiers held
+
+void resetModifiers() {
+    // Force shift up in case it got stuck
+    INPUT in = makeScan(LSHIFT, false);
+    SendInput(1, &in, sizeof(INPUT));
+}
