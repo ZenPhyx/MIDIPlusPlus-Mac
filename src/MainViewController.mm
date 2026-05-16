@@ -180,8 +180,15 @@ static NSButton* makeButton(NSString* title, NSColor* color, id target, SEL acti
     NSTextField* title = [NSTextField labelWithString:@"🎹  Roblox Piano"];
     title.font      = [NSFont systemFontOfSize:20 weight:NSFontWeightBold];
     title.textColor = NSColor.labelColor;
-    title.frame     = NSMakeRect(M, H - 54, W - M*2, 30);
+    title.frame     = NSMakeRect(M, H - 50, W - M*2, 28);
     [v addSubview:title];
+
+    NSTextField* credit = [NSTextField labelWithString:@"Created by ZenPhyx"];
+    credit.font      = [NSFont systemFontOfSize:10];
+    credit.textColor = NSColor.tertiaryLabelColor;
+    credit.alignment = NSTextAlignmentRight;
+    credit.frame     = NSMakeRect(M, H - 50, W - M*2, 14);
+    [v addSubview:credit];
 
     // ── Separator ──
     NSBox* sep = [[NSBox alloc] initWithFrame:NSMakeRect(M, H - 62, W - M*2, 1)];

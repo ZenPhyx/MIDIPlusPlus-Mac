@@ -15,10 +15,18 @@ set(SOURCES
     src/RtMidi.cpp
 )
 
+if(APP_ICON AND EXISTS "${CMAKE_SOURCE_DIR}/assets/AppIcon.icns")
+    set(ICON_FILE "${CMAKE_SOURCE_DIR}/assets/AppIcon.icns")
+    list(APPEND SOURCES ${ICON_FILE})
+    set_source_files_properties(${ICON_FILE} PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+endif()
+
 add_executable(RobloxPiano MACOSX_BUNDLE ${SOURCES})
 
 set_target_properties(RobloxPiano PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/Info.plist"
+    MACOSX_BUNDLE_ICON_FILE  "AppIcon"
 )
 
 target_include_directories(RobloxPiano PRIVATE include)
