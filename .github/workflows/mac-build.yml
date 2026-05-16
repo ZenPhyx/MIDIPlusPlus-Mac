@@ -7,6 +7,8 @@ on:
 jobs:
   build-mac:
     runs-on: macos-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -22,8 +24,13 @@ jobs:
           cd build
           make
 
-      - name: Upload build
-        uses: actions/upload-artifact@v4
-        with:
-          name: RobloxPiano
-          path: build/RobloxPiano
+      - name: Publish latest release
+        run: |
+          gh release delete latest --yes 2>/dev/null || true
+          git push origin :refs/tags/latest 2>/dev/null || true
+          gh release create latest build/RobloxPiano \
+            --title "RobloxPiano (macOS)" \
+            --notes "Roblox Virtual Piano player for macOS. Download, run \`xattr -d com.apple.quarantine ./RobloxPiano\` once, then add Terminal to Accessibility in System Settings." \
+            --latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
