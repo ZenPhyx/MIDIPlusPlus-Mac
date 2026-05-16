@@ -374,15 +374,11 @@ static NSButton* makeButton(NSString* title, NSColor* color, id target, SEL acti
 }
 
 - (void)stopPlayback:(id)sender {
-    // Stop file playback
     _player->stop();
-    // Stop live mode
     [self.pollTimer invalidate];
     self.pollTimer = nil;
-    if (_midiInput) {
-        _midiInput->closePort();
-        _midiInput.reset();
-    }
+    if (_midiInput) { _midiInput->closePort(); _midiInput.reset(); }
+    resetModifiers(); // release any stuck shift key
     [self setPlayingState:NO];
 }
 

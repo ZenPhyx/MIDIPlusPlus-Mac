@@ -1,6 +1,7 @@
 #include "MacInputInjector.hpp"
 #include <ApplicationServices/ApplicationServices.h>
 #include <unordered_map>
+#include <atomic>
 
 static const std::unordered_map<char, CGKeyCode> BASE_KEY_MAP = {
     {'a', 0},  {'s', 1},  {'d', 2},  {'f', 3},  {'h', 4},  {'g', 5},
@@ -20,26 +21,23 @@ static const std::unordered_map<char, CGKeyCode> SHIFT_KEY_MAP = {
 
 static constexpr CGKeyCode SHIFT_KEY = 56;
 
+// How many shift-requiring keys are currently held.
+// Shift is pressed on 0→1 and released on 1→0.
+static std::atomic<int> g_shiftHeld{0};
+
 static bool resolveKey(char key, CGKeyCode& outCode, bool& outShift) {
     if (key >= 'A' && key <= 'Z') {
-        char lower = static_cast<char>(key - 'A' + 'a');
-        auto it = BASE_KEY_MAP.find(lower);
+        auto it = BASE_KEY_MAP.find(static_cast<char>(key - 'A' + 'a'));
         if (it == BASE_KEY_MAP.end()) return false;
-        outCode  = it->second;
-        outShift = true;
-        return true;
+        outCode = it->second; outShift = true; return true;
     }
-    auto shiftIt = SHIFT_KEY_MAP.find(key);
-    if (shiftIt != SHIFT_KEY_MAP.end()) {
-        outCode  = shiftIt->second;
-        outShift = true;
-        return true;
+    auto sit = SHIFT_KEY_MAP.find(key);
+    if (sit != SHIFT_KEY_MAP.end()) {
+        outCode = sit->second; outShift = true; return true;
     }
-    auto baseIt = BASE_KEY_MAP.find(key);
-    if (baseIt == BASE_KEY_MAP.end()) return false;
-    outCode  = baseIt->second;
-    outShift = false;
-    return true;
+    auto bit = BASE_KEY_MAP.find(key);
+    if (bit == BASE_KEY_MAP.end()) return false;
+    outCode = bit->second; outShift = false; return true;
 }
 
 static void post(CGKeyCode code, bool down, CGEventFlags flags = 0) {
@@ -52,7 +50,8 @@ static void post(CGKeyCode code, bool down, CGEventFlags flags = 0) {
 void pressKey(char key) {
     CGKeyCode code; bool shift;
     if (!resolveKey(key, code, shift)) return;
-    if (shift) post(SHIFT_KEY, true, kCGEventFlagMaskShift);
+    if (shift && g_shiftHeld.fetch_add(1) == 0)
+        post(SHIFT_KEY, true, kCGEventFlagMaskShift);
     post(code, true, shift ? kCGEventFlagMaskShift : 0);
 }
 
@@ -60,10 +59,16 @@ void releaseKey(char key) {
     CGKeyCode code; bool shift;
     if (!resolveKey(key, code, shift)) return;
     post(code, false, shift ? kCGEventFlagMaskShift : 0);
-    if (shift) post(SHIFT_KEY, false, 0);
+    if (shift && g_shiftHeld.fetch_sub(1) == 1)
+        post(SHIFT_KEY, false, 0);
 }
 
 void tapKey(char key) {
     pressKey(key);
     releaseKey(key);
+}
+
+void resetModifiers() {
+    if (g_shiftHeld.exchange(0) > 0)
+        post(SHIFT_KEY, false, 0);
 }
