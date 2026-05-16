@@ -5,6 +5,7 @@
 #define _UNICODE
 #endif
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX        // prevent Windows headers from defining min/max macros
 #include <windows.h>
 #include <commctrl.h>
 #include <commdlg.h>
