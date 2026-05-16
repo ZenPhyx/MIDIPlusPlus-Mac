@@ -23,6 +23,7 @@ if(WIN32)
 
     target_include_directories(Snuffiano PRIVATE include)
     target_compile_definitions(Snuffiano PRIVATE __WINDOWS_MM__ UNICODE _UNICODE)
+    target_compile_options(Snuffiano PRIVATE /utf-8)   # source files are UTF-8
 
     # Static runtime so the exe runs without the VC++ redistributable
     set_property(TARGET Snuffiano PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

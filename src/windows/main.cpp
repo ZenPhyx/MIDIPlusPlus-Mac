@@ -212,7 +212,7 @@ static void startPlaying() {
         []() { PostMessage(g_hwnd, WM_USER + 2, 0, 0); }
     );
 
-    SetDlgItemTextW(g_hwnd, ID_PLAYPAUSE, L"⏸"); // ⏸
+    SetDlgItemTextW(g_hwnd, ID_PLAYPAUSE, L"Pause"); // ⏸
     SetTimer(g_hwnd, ID_TIMER_PROGRESS, 100, nullptr);
 }
 
@@ -285,7 +285,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         KillTimer(hwnd, ID_TIMER_PROGRESS);
         SendMessage(GetDlgItem(hwnd, ID_PROGRESS), TBM_SETPOS, TRUE, 0);
         SetDlgItemTextW(hwnd, ID_ELAPSED, L"0:00");
-        SetDlgItemTextW(hwnd, ID_PLAYPAUSE, L"▶"); // ▶
+        SetDlgItemTextW(hwnd, ID_PLAYPAUSE, L"Play"); // ▶
         break;
 
     case WM_DROPFILES: {
@@ -316,7 +316,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             double sp = 0.25 + pos / 100.0 * 1.75;
             g_player->setSpeed(sp);
             wchar_t buf[16];
-            swprintf_s(buf, L"%.2f×", sp); // ×
+            swprintf_s(buf, L"%.2fx", sp); // ×
             SetDlgItemTextW(hwnd, ID_SPEED_LBL, buf);
         }
         break;
@@ -364,10 +364,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (g_player->isRunning()) {
                 if (g_player->isPaused()) {
                     g_player->resume();
-                    SetDlgItemTextW(hwnd, ID_PLAYPAUSE, L"⏸");
+                    SetDlgItemTextW(hwnd, ID_PLAYPAUSE, L"Pause");
                 } else {
                     g_player->pause();
-                    SetDlgItemTextW(hwnd, ID_PLAYPAUSE, L"▶");
+                    SetDlgItemTextW(hwnd, ID_PLAYPAUSE, L"Play");
                 }
             } else {
                 startPlaying();
@@ -382,7 +382,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             resetModifiers();
             SendMessage(GetDlgItem(hwnd, ID_PROGRESS), TBM_SETPOS, TRUE, 0);
             SetDlgItemTextW(hwnd, ID_ELAPSED,   L"0:00");
-            SetDlgItemTextW(hwnd, ID_PLAYPAUSE, L"▶");
+            SetDlgItemTextW(hwnd, ID_PLAYPAUSE, L"Play");
             setStatus(L"Stopped.");
             break;
 
@@ -492,7 +492,7 @@ static void createControls(HWND hwnd) {
     setFont(hCred, g_fontSm);
 
     // Browse
-    HWND hBrowse = mkBtn(hwnd, L"\U0001F4C2  Browse MIDI File…", 20, 60, 420, 36, ID_BROWSE);
+    HWND hBrowse = mkBtn(hwnd, L"Browse MIDI File...", 20, 60, 420, 36, ID_BROWSE);
     setFont(hBrowse, g_fontBold);
 
     // Library header
@@ -523,11 +523,11 @@ static void createControls(HWND hwnd) {
 
     // Transport
     int ty = 332;
-    HWND hRes = mkBtn(hwnd, L"↩", 20,  ty, 52, 34, ID_RESTART);   setFont(hRes, g_fontBold);
-    HWND hRew = mkBtn(hwnd, L"⟨⟨", 76, ty, 60, 34, ID_REWIND); setFont(hRew, g_fontBold);
-    HWND hPP  = mkBtn(hwnd, L"▶", 148, ty-4, 72, 42, ID_PLAYPAUSE); setFont(hPP,  g_fontTitle);
-    HWND hFwd = mkBtn(hwnd, L"⟩⟩", 224, ty, 60, 34, ID_FWD);   setFont(hFwd, g_fontBold);
-    HWND hStp = mkBtn(hwnd, L"■", 288, ty, 52, 34, ID_STOP);        setFont(hStp, g_fontBold);
+    HWND hRes = mkBtn(hwnd, L"|<",  20,  ty, 52, 34, ID_RESTART);  setFont(hRes, g_fontBold);
+    HWND hRew = mkBtn(hwnd, L"<< 10s", 76, ty, 60, 34, ID_REWIND); setFont(hRew, g_fontBold);
+    HWND hPP  = mkBtn(hwnd, L"Play",  148, ty-4, 72, 42, ID_PLAYPAUSE); setFont(hPP,  g_fontTitle);
+    HWND hFwd = mkBtn(hwnd, L"10s >>", 224, ty, 60, 34, ID_FWD);  setFont(hFwd, g_fontBold);
+    HWND hStp = mkBtn(hwnd, L"Stop",  288, ty, 52, 34, ID_STOP);   setFont(hStp, g_fontBold);
     (void)hRes; (void)hRew; (void)hPP; (void)hFwd; (void)hStp;
 
     // Speed row
@@ -538,7 +538,7 @@ static void createControls(HWND hwnd) {
     setFont(hSpVal, g_fontSm);
 
     // "or" label
-    HWND hOr = mkStatic(hwnd, L"— or use a MIDI keyboard —", 20, 415, 420, 14, 0);
+    HWND hOr = mkStatic(hwnd, L"-- or use a MIDI keyboard --", 20, 415, 420, 14, 0);
     setFont(hOr, g_fontSm);
 
     // Device row
@@ -552,7 +552,7 @@ static void createControls(HWND hwnd) {
     setFont(hRef, g_fontNorm);
 
     // Live mode
-    HWND hLive = mkBtn(hwnd, L"\U0001F3B9  Live Mode", 20, 467, 420, 38, ID_LIVE);
+    HWND hLive = mkBtn(hwnd, L"Live Mode", 20, 467, 420, 38, ID_LIVE);
     setFont(hLive, g_fontBold);
 
     // Status
