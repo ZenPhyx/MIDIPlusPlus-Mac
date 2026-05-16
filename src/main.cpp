@@ -119,6 +119,11 @@ static void runFileMode() {
     // Trim quotes the user might have pasted
     if (!path.empty() && path.front() == '"') path = path.substr(1);
     if (!path.empty() && path.back()  == '"') path.pop_back();
+    // Expand leading ~ to home directory
+    if (!path.empty() && path.front() == '~') {
+        const char* home = std::getenv("HOME");
+        if (home) path = std::string(home) + path.substr(1);
+    }
 
     MidiParser parser;
     MidiFile midiFile;
