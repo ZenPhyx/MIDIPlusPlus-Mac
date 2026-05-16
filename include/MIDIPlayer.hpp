@@ -6,7 +6,7 @@
 
 class MIDIPlayer {
 public:
-    using KeyCallback    = std::function<void(char)>;
+    using KeyCallback    = std::function<void(char, bool press)>;
     using StatusCallback = std::function<void(const std::string&)>;
     using DoneCallback   = std::function<void()>;
 

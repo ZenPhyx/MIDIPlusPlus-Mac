@@ -308,7 +308,7 @@ static NSButton* makeButton(NSString* title, NSColor* color, id target, SEL acti
     std::string p = path.UTF8String;
 
     _player->playFile(p,
-        [](char key)                    { tapKey(key); },
+        [](char key, bool press)        { press ? pressKey(key) : releaseKey(key); },
         [weak](const std::string& msg)  {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [weak setStatus:@(msg.c_str())];
@@ -361,10 +361,16 @@ static NSButton* makeButton(NSString* title, NSColor* color, id target, SEL acti
 - (void)pollMIDI:(NSTimer*)timer {
     if (!_midiInput) return;
     _midiInput->getMessage(&_midiMsg);
-    if (_midiMsg.size() >= 3 && (_midiMsg[0] & 0xF0) == 0x90 && _midiMsg[2] > 0) {
-        auto key = RobloxKeyMapper::map(static_cast<int>(_midiMsg[1]));
-        if (key) tapKey(*key);
-    }
+    if (_midiMsg.size() < 3) return;
+    uint8_t type     = _midiMsg[0] & 0xF0;
+    uint8_t midiNote = _midiMsg[1];
+    uint8_t velocity = _midiMsg[2];
+    auto key = RobloxKeyMapper::map(static_cast<int>(midiNote));
+    if (!key) return;
+    if (type == 0x90 && velocity > 0)
+        pressKey(*key);
+    else if (type == 0x80 || (type == 0x90 && velocity == 0))
+        releaseKey(*key);
 }
 
 - (void)stopPlayback:(id)sender {

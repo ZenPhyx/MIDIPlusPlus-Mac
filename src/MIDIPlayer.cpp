@@ -27,28 +27,36 @@ static int64_t tickToUs(uint32_t tick, uint16_t division,
     return us;
 }
 
-struct TimedNote { int64_t us; char key; };
+struct TimedNote { int64_t us; char key; bool press; };
 
 static std::vector<TimedNote> buildTimeline(const MidiFile& midi, int transposeAmount) {
-    std::vector<std::pair<uint32_t, int>> raw;
+    // Collect note-on and note-off events
+    struct RawEvent { uint32_t tick; int note; bool press; };
+    std::vector<RawEvent> raw;
     int lo = 127, hi = 0;
+
     for (const auto& track : midi.tracks) {
         for (const auto& ev : track.events) {
-            if ((ev.status & 0xF0) == 0x90 && ev.data2 > 0) {
-                raw.push_back({ev.absoluteTick, ev.data1});
+            uint8_t type = ev.status & 0xF0;
+            bool isOn  = (type == 0x90 && ev.data2 > 0);
+            bool isOff = (type == 0x80) || (type == 0x90 && ev.data2 == 0);
+            if (isOn) {
+                raw.push_back({ev.absoluteTick, ev.data1, true});
                 lo = std::min(lo, (int)ev.data1);
                 hi = std::max(hi, (int)ev.data1);
+            } else if (isOff) {
+                raw.push_back({ev.absoluteTick, ev.data1, false});
             }
         }
     }
     if (raw.empty()) return {};
 
-    std::sort(raw.begin(), raw.end(), [](auto& a, auto& b){ return a.first < b.first; });
+    std::sort(raw.begin(), raw.end(), [](auto& a, auto& b){ return a.tick < b.tick; });
 
     std::vector<TimedNote> timeline;
-    for (auto& [tick, note] : raw) {
-        auto key = RobloxKeyMapper::map(note + transposeAmount);
-        if (key) timeline.push_back({tickToUs(tick, midi.division, midi.tempoChanges), *key});
+    for (auto& r : raw) {
+        auto key = RobloxKeyMapper::map(r.note + transposeAmount);
+        if (key) timeline.push_back({tickToUs(r.tick, midi.division, midi.tempoChanges), *key, r.press});
     }
     return timeline;
 }
@@ -134,7 +142,7 @@ void MIDIPlayer::playFile(const std::string& path,
             auto target = start + std::chrono::microseconds(note.us);
             std::this_thread::sleep_until(target);
             if (!m_running) break;
-            onKey(note.key);
+            onKey(note.key, note.press);
         }
 
         if (m_running) onStatus("Done!");
