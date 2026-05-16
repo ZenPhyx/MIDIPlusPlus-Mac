@@ -46,15 +46,18 @@ jobs:
 
       - name: Create release and upload macOS build
         run: |
+          cat > notes.md << 'EOF'
+          ## Download
+
+          **macOS:** Download Snuffiano-macOS.zip, unzip, right-click → Open to bypass Gatekeeper.
+          Then add Terminal to Accessibility: System Settings → Privacy & Security → Accessibility.
+
+          **Windows:** Download Snuffiano-Windows.zip, unzip, run Snuffiano.exe.
+          EOF
           gh release delete latest --cleanup-tag --yes 2>/dev/null || true
           gh release create latest build/Snuffiano-macOS.zip \
             --title "Snuffiano" \
-            --notes "## Download
-
-**macOS:** Download \`Snuffiano-macOS.zip\`, unzip, right-click → Open to bypass Gatekeeper.
-Then add Terminal to Accessibility: System Settings → Privacy & Security → Accessibility.
-
-**Windows:** Download \`Snuffiano-Windows.zip\`, unzip, run \`Snuffiano.exe\`." \
+            --notes-file notes.md \
             --latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
