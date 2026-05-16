@@ -24,13 +24,19 @@ jobs:
           cd build
           make
 
+      - name: Package
+        run: |
+          codesign --force --deep --sign - build/RobloxPiano.app
+          cd build
+          zip -r RobloxPiano.zip RobloxPiano.app
+
       - name: Publish latest release
         run: |
           gh release delete latest --yes 2>/dev/null || true
           git push origin :refs/tags/latest 2>/dev/null || true
-          gh release create latest build/RobloxPiano \
-            --title "RobloxPiano (macOS)" \
-            --notes "Roblox Virtual Piano player for macOS. Download, run \`xattr -d com.apple.quarantine ./RobloxPiano\` once, then add Terminal to Accessibility in System Settings." \
+          gh release create latest build/RobloxPiano.zip \
+            --title "Roblox Piano (macOS)" \
+            --notes "Double-click RobloxPiano.app to open. First launch: right-click → Open to bypass Gatekeeper. Then add Terminal to Accessibility in System Settings → Privacy & Security." \
             --latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
