@@ -23,6 +23,14 @@ set_target_properties(RobloxPiano PROPERTIES
 
 target_include_directories(RobloxPiano PRIVATE include)
 
+# Enable ARC for Objective-C++ UI files
+set_source_files_properties(
+    src/main.mm
+    src/AppDelegate.mm
+    src/MainViewController.mm
+    PROPERTIES COMPILE_FLAGS "-fobjc-arc"
+)
+
 target_compile_definitions(RobloxPiano PRIVATE __MACOSX_CORE__)
 
 target_link_libraries(RobloxPiano

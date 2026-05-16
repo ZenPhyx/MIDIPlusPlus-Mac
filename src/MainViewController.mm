@@ -1,4 +1,5 @@
 #import "MainViewController.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include "MIDIPlayer.hpp"
 #include "MacInputInjector.hpp"
 #include "RtMidi.h"
@@ -8,8 +9,8 @@
 // ─── DropZoneView ─────────────────────────────────────────────────────────────
 
 @interface DropZoneView : NSView
-@property (copy)   void (^onFileSelected)(NSString* path);
-@property (strong) NSString* selectedPath;
+@property (nonatomic, copy)   void (^onFileSelected)(NSString* path);
+@property (nonatomic, strong) NSString* selectedPath;
 @end
 
 @implementation DropZoneView {
@@ -94,7 +95,11 @@
     panel.message              = @"Choose a MIDI file";
     panel.allowsMultipleSelection = NO;
     panel.canChooseDirectories = NO;
-    panel.allowedFileTypes     = @[@"mid", @"midi"];
+    if (@available(macOS 12.0, *)) {
+        panel.allowedContentTypes = @[UTTypeData]; // parser will reject non-MIDI
+    } else {
+        panel.allowedFileTypes = @[@"mid", @"midi"];
+    }
     panel.allowsOtherFileTypes = YES;
     if ([panel runModal] == NSModalResponseOK && self.onFileSelected)
         self.onFileSelected(panel.URL.path);
