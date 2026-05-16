@@ -1,7 +1,6 @@
 #include "MacInputInjector.hpp"
 #include <ApplicationServices/ApplicationServices.h>
 #include <unordered_map>
-#include <atomic>
 
 static const std::unordered_map<char, CGKeyCode> BASE_KEY_MAP = {
     {'a', 0},  {'s', 1},  {'d', 2},  {'f', 3},  {'h', 4},  {'g', 5},
@@ -20,10 +19,6 @@ static const std::unordered_map<char, CGKeyCode> SHIFT_KEY_MAP = {
 };
 
 static constexpr CGKeyCode SHIFT_KEY = 56;
-
-// How many shift-requiring keys are currently held.
-// Shift is pressed on 0→1 and released on 1→0.
-static std::atomic<int> g_shiftHeld{0};
 
 static bool resolveKey(char key, CGKeyCode& outCode, bool& outShift) {
     if (key >= 'A' && key <= 'Z') {
@@ -50,17 +45,21 @@ static void post(CGKeyCode code, bool down, CGEventFlags flags = 0) {
 void pressKey(char key) {
     CGKeyCode code; bool shift;
     if (!resolveKey(key, code, shift)) return;
-    if (shift && g_shiftHeld.fetch_add(1) == 0)
-        post(SHIFT_KEY, true, kCGEventFlagMaskShift);
-    post(code, true, shift ? kCGEventFlagMaskShift : 0);
+    if (shift) {
+        // Hold shift only long enough to register the key-down, then release it.
+        // The key itself stays held — Roblox sustains the note until key-up arrives.
+        post(SHIFT_KEY, true,  kCGEventFlagMaskShift);
+        post(code,      true,  kCGEventFlagMaskShift);
+        post(SHIFT_KEY, false, 0);
+    } else {
+        post(code, true, 0);
+    }
 }
 
 void releaseKey(char key) {
     CGKeyCode code; bool shift;
     if (!resolveKey(key, code, shift)) return;
-    post(code, false, shift ? kCGEventFlagMaskShift : 0);
-    if (shift && g_shiftHeld.fetch_sub(1) == 1)
-        post(SHIFT_KEY, false, 0);
+    post(code, false, 0); // shift is already released, just send key-up
 }
 
 void tapKey(char key) {
@@ -69,6 +68,6 @@ void tapKey(char key) {
 }
 
 void resetModifiers() {
-    if (g_shiftHeld.exchange(0) > 0)
-        post(SHIFT_KEY, false, 0);
+    // Shift is never held between press and release, so nothing to reset.
+    post(SHIFT_KEY, false, 0); // safety: force shift up in case anything got stuck
 }
