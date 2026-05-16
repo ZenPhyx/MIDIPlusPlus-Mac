@@ -52,17 +52,15 @@ static void post(CGKeyCode code, bool down, CGEventFlags flags = 0) {
 void pressKey(char key) {
     CGKeyCode code; bool shift;
     if (!resolveKey(key, code, shift)) return;
-    CGEventFlags flags = shift ? kCGEventFlagMaskShift : 0;
-    if (shift) post(SHIFT_KEY, true);
-    post(code, true, flags);
+    if (shift) post(SHIFT_KEY, true, kCGEventFlagMaskShift);
+    post(code, true, shift ? kCGEventFlagMaskShift : 0);
 }
 
 void releaseKey(char key) {
     CGKeyCode code; bool shift;
     if (!resolveKey(key, code, shift)) return;
-    CGEventFlags flags = shift ? kCGEventFlagMaskShift : 0;
-    post(code, false, flags);
-    if (shift) post(SHIFT_KEY, false);
+    post(code, false, shift ? kCGEventFlagMaskShift : 0);
+    if (shift) post(SHIFT_KEY, false, 0);
 }
 
 void tapKey(char key) {
