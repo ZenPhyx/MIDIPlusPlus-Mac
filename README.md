@@ -9,8 +9,7 @@
 
 ---
 
-<!-- Replace the image below with a screenshot of the app -->
-![App Screenshot](https://placehold.co/860x480?text=App+Screenshot)
+![App Screenshot](assets/screenshot-hero.png)
 
 ---
 
@@ -33,7 +32,7 @@ Snuffiano lets you play MIDI files and live MIDI keyboards through **Roblox Virt
 
 | macOS | Windows |
 |-------|---------|
-| ![macOS screenshot](https://placehold.co/400x500?text=macOS) | ![Windows screenshot](https://placehold.co/400x500?text=Windows) |
+| ![macOS screenshot](assets/screenshot-mac.png) | ![Windows screenshot](assets/screenshot-win.png) |
 
 ---
 
