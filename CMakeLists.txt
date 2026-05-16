@@ -28,6 +28,7 @@ if(WIN32)
         src/windows/main.cpp
         src/windows/WinInputInjector.cpp
         src/windows/NtUserInput.cpp
+        src/windows/resources.rc
     )
 
     target_include_directories(Snuffiano PRIVATE

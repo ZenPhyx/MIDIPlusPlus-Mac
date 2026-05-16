@@ -1,0 +1,4 @@
+// Windows resource file — embeds the app icon into the exe
+#include <windows.h>
+
+IDI_APPICON ICON "..\\..\\assets\\icon.ico"

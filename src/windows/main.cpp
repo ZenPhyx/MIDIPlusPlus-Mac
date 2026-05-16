@@ -480,6 +480,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     wc.lpszClassName=L"SnuffianoWnd";
     wc.hCursor=LoadCursor(nullptr,IDC_ARROW);
     wc.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);
+    wc.hIcon = LoadIconW(hInst, L"IDI_APPICON");
+    if (!wc.hIcon) wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     RegisterClassW(&wc);
 
     g_hwnd = CreateWindowExW(WS_EX_TOPMOST, L"SnuffianoWnd", L"Snuffiano",
