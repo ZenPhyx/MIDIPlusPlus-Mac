@@ -27,6 +27,7 @@ static const std::unordered_map<char, WORD> SHIFT_SCAN = {
 };
 
 static const WORD LSHIFT  = 0x2A;
+static const WORD LCTRL   = 0x1D;
 static const DWORD SC_DN  = KEYEVENTF_SCANCODE;
 static const DWORD SC_UP  = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
 
@@ -39,16 +40,20 @@ static INPUT kbd(WORD scan, DWORD flags) {
 }
 
 void pressKey(char key) {
+    // Extended 88-key range: Ctrl+key (high bit set)
+    if (isCtrlKey(key)) {
+        char base = ctrlBase(key);
+        auto bit = BASE_SCAN.find(base);
+        if (bit != BASE_SCAN.end()) {
+            INPUT inp[3] = { kbd(LCTRL, SC_DN), kbd(bit->second, SC_DN), kbd(LCTRL, SC_UP) };
+            NtUserSendInputCall(3, inp, sizeof(INPUT));
+        }
+        return;
+    }
     auto sit = SHIFT_SCAN.find(key);
     if (sit != SHIFT_SCAN.end()) {
         // MIDI++ approach: shift-down, key-down, shift-up — all in one atomic batch.
-        // Shift is NEVER held between events, so white keys pressed while this note
-        // is sustained are not corrupted by a lingering shift state.
-        INPUT inp[3] = {
-            kbd(LSHIFT,       SC_DN),
-            kbd(sit->second,  SC_DN),
-            kbd(LSHIFT,       SC_UP),
-        };
+        INPUT inp[3] = { kbd(LSHIFT, SC_DN), kbd(sit->second, SC_DN), kbd(LSHIFT, SC_UP) };
         NtUserSendInputCall(3, inp, sizeof(INPUT));
         return;
     }
@@ -60,15 +65,18 @@ void pressKey(char key) {
 }
 
 void releaseKey(char key) {
+    if (isCtrlKey(key)) {
+        char base = ctrlBase(key);
+        auto bit = BASE_SCAN.find(base);
+        if (bit != BASE_SCAN.end()) {
+            INPUT inp[3] = { kbd(LCTRL, SC_DN), kbd(bit->second, SC_UP), kbd(LCTRL, SC_UP) };
+            NtUserSendInputCall(3, inp, sizeof(INPUT));
+        }
+        return;
+    }
     auto sit = SHIFT_SCAN.find(key);
     if (sit != SHIFT_SCAN.end()) {
-        // Mirror of press: shift-down, key-up, shift-up.
-        // Roblox needs shift to be present on the key-up to match the key-down.
-        INPUT inp[3] = {
-            kbd(LSHIFT,       SC_DN),
-            kbd(sit->second,  SC_UP),
-            kbd(LSHIFT,       SC_UP),
-        };
+        INPUT inp[3] = { kbd(LSHIFT, SC_DN), kbd(sit->second, SC_UP), kbd(LSHIFT, SC_UP) };
         NtUserSendInputCall(3, inp, sizeof(INPUT));
         return;
     }
@@ -94,6 +102,7 @@ void resetModifiers() {
 static std::array<char, 256> g_scanOwner{};
 
 static WORD scanOf(char key) {
+    if (isCtrlKey(key)) key = ctrlBase(key);
     auto sit = SHIFT_SCAN.find(key);
     if (sit != SHIFT_SCAN.end()) return sit->second;
     auto bit = BASE_SCAN.find(key);

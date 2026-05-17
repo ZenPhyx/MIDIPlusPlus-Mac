@@ -84,6 +84,7 @@ static MidiFile parseMidi(const std::string& path) {
 // symbols mapped back to their number key). Two keys conflict when they share
 // the same physical key on the keyboard — e.g. 'c' and 'C', '1' and '!'.
 static char keyBase(char k) {
+    if (isCtrlKey(k)) k = ctrlBase(k);  // Ctrl+q same scan code as q
     if (k >= 'A' && k <= 'Z') return (char)(k - 'A' + 'a');
     if (k == '!') return '1'; if (k == '@') return '2';
     if (k == '$') return '4'; if (k == '%') return '5';

@@ -1,4 +1,5 @@
 #include "MacInputInjector.hpp"
+#include "InputInjector.hpp"
 #include <ApplicationServices/ApplicationServices.h>
 #include <unordered_map>
 
@@ -28,8 +29,9 @@ static const std::unordered_map<char, CGKeyCode> PHANTOM_KEY_MAP = {
     {'!', 218}, {'@', 219}, {'$', 220}, {'%', 221}, {'^', 222}, {'*', 223}, {'(', 224},
 };
 
-static void postBase(CGKeyCode code, bool down) {
+static void postBase(CGKeyCode code, bool down, CGEventFlags flags = 0) {
     CGEventRef e = CGEventCreateKeyboardEvent(nullptr, code, down);
+    if (flags) CGEventSetFlags(e, flags);
     CGEventPost(kCGSessionEventTap, e);
     CFRelease(e);
 }
@@ -45,6 +47,14 @@ static void postPhantom(char c, CGKeyCode code, bool down) {
 }
 
 void pressKey(char key) {
+    // Extended 88-key range: Ctrl+key (high bit set)
+    if (isCtrlKey(key)) {
+        char base = ctrlBase(key);
+        auto bit = BASE_KEY_MAP.find(base);
+        if (bit != BASE_KEY_MAP.end())
+            postBase(bit->second, true, kCGEventFlagMaskControl);
+        return;
+    }
     auto pit = PHANTOM_KEY_MAP.find(key);
     if (pit != PHANTOM_KEY_MAP.end()) { postPhantom(key, pit->second, true); return; }
     auto bit = BASE_KEY_MAP.find(key);
@@ -52,6 +62,13 @@ void pressKey(char key) {
 }
 
 void releaseKey(char key) {
+    if (isCtrlKey(key)) {
+        char base = ctrlBase(key);
+        auto bit = BASE_KEY_MAP.find(base);
+        if (bit != BASE_KEY_MAP.end())
+            postBase(bit->second, false, 0);
+        return;
+    }
     auto pit = PHANTOM_KEY_MAP.find(key);
     if (pit != PHANTOM_KEY_MAP.end()) { postPhantom(key, pit->second, false); return; }
     auto bit = BASE_KEY_MAP.find(key);

@@ -1,5 +1,12 @@
 #pragma once
 
+// Ctrl+key encoding: set the high bit of the ASCII value.
+// All standard Roblox piano keys are printable ASCII (< 128), so the high bit
+// is free to use as a "needs Control modifier" flag.
+inline char        ctrlKey(char c) { return static_cast<char>(static_cast<unsigned char>(c) | 0x80u); }
+inline bool        isCtrlKey(char c) { return static_cast<unsigned char>(c) >= 0x80u; }
+inline char        ctrlBase(char c) { return static_cast<char>(static_cast<unsigned char>(c) & 0x7Fu); }
+
 // Platform-agnostic key injection interface.
 // Implemented by MacInputInjector.mm (macOS) and WinInputInjector.cpp (Windows).
 void pressKey(char key);
