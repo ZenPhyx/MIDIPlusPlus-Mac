@@ -133,6 +133,14 @@ input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;
     <select class="dr-sel" id="devs"><option>No MIDI devices found</option></select>
     <div class="ref" onclick="send({a:'refresh'})">&#x21BA;</div>
   </div>
+  <div class="dr">
+    <span class="dr-lbl">Sustain pedal:</span>
+    <select class="dr-sel" id="skey" onchange="send({a:'sustain_key',k:this.value})">
+      <option value=" ">Space (default)</option>
+      <option value="&#x9;">Tab</option>
+      <option value="&#x0;">None (disabled)</option>
+    </select>
+  </div>
   <button class="live" onclick="send({a:'live',i:document.getElementById('devs').selectedIndex})">&#x1F3B9;&nbsp; Live Mode</button>
   <div class="status" id="st">Drop a MIDI file or pick one from your library</div>
   <div class="a11y">Accessibility required &middot; Run as administrator if keys don&apos;t inject</div>
@@ -164,7 +172,8 @@ updSliders();send({a:'init'});
 // ─── Globals ──────────────────────────────────────────────────────────────────
 
 static HWND g_hwnd;
-static HWND g_prevFocus = nullptr;  // window that had focus before user clicked us
+static HWND g_prevFocus  = nullptr;  // window that had focus before user clicked us
+static char g_sustainKey = ' ';      // key sent on CC64 (sustain pedal), default Space
 static ComPtr<ICoreWebView2Controller> g_wvc;
 static ComPtr<ICoreWebView2>           g_wv;
 
@@ -367,6 +376,17 @@ static void onMsg(const std::wstring& m) {
         return;
     }
 
+    if (has(L"\"sustain_key\"")) {
+        // Extract the single-char value from {"a":"sustain_key","k":"<char>"}
+        auto kp = m.find(L"\"k\""); if (kp==std::wstring::npos) return;
+        kp = m.find(L'"', kp+4); if (kp==std::wstring::npos) return; kp++;
+        auto ke = m.find(L'"', kp); if (ke==std::wstring::npos) return;
+        std::wstring kval = m.substr(kp, ke-kp);
+        g_sustainKey = kval.empty() ? '\0' : static_cast<char>(kval[0]);
+        g_player->setSustainKey(g_sustainKey);
+        return;
+    }
+
     if (has(L"\"play\"")) {
         if (g_player->isRunning()) {
             if (g_player->isPaused()) { g_player->resume(); jsCall(L"setPlaying",L"true"); }
@@ -436,13 +456,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             jsExec(s);
         }
         if (wp==TID_MIDI && g_midiIn) {
-            g_midiIn->getMessage(&g_midiMsg);
-            if (g_midiMsg.size()>=3) {
+            // Drain all pending MIDI messages this tick
+            while (true) {
+                g_midiIn->getMessage(&g_midiMsg);
+                if (g_midiMsg.empty()) break;
+                if (g_midiMsg.size()<3) continue;
                 uint8_t type=g_midiMsg[0]&0xF0, note=g_midiMsg[1], vel=g_midiMsg[2];
-                auto key = RobloxKeyMapper::map((int)note);
-                if (key) {
-                    if (type==0x90&&vel>0) livePress(*key);
-                    else if (type==0x80||(type==0x90&&vel==0)) liveRelease(*key);
+                if (type==0x90&&vel>0) {
+                    auto key = RobloxKeyMapper::map((int)note);
+                    if (key) livePress(*key);
+                } else if (type==0x80||(type==0x90&&vel==0)) {
+                    auto key = RobloxKeyMapper::map((int)note);
+                    if (key) liveRelease(*key);
+                } else if (type==0xB0 && note==64 && g_sustainKey) {
+                    vel>=64 ? pressKey(g_sustainKey) : releaseKey(g_sustainKey);
                 }
             }
         }

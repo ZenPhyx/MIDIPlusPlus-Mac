@@ -28,7 +28,7 @@ static int64_t tickToUs(uint32_t tick, uint16_t division,
 
 struct TimedNote { int64_t us; char key; bool press; };
 
-static std::vector<TimedNote> buildTimeline(const MidiFile& midi, int transpose) {
+static std::vector<TimedNote> buildTimeline(const MidiFile& midi, int transpose, char sustainKey) {
     struct RawEvent { uint32_t tick; int note; bool press; };
     std::vector<RawEvent> raw;
     int lo = 127, hi = 0;
@@ -50,6 +50,22 @@ static std::vector<TimedNote> buildTimeline(const MidiFile& midi, int transpose)
     for (auto& r : raw) {
         auto key = RobloxKeyMapper::map(r.note + transpose);
         if (key) tl.push_back({tickToUs(r.tick, midi.division, midi.tempoChanges), *key, r.press});
+    }
+
+    // CC64 = sustain pedal — map to the user-configured key (default: Space)
+    if (sustainKey) {
+        for (const auto& track : midi.tracks) {
+            for (const auto& ev : track.events) {
+                if ((ev.status & 0xF0) == 0xB0 && ev.data1 == 64) {
+                    bool on = ev.data2 >= 64;
+                    tl.push_back({tickToUs(ev.absoluteTick, midi.division, midi.tempoChanges),
+                                  sustainKey, on});
+                }
+            }
+        }
+        std::sort(tl.begin(), tl.end(), [](const TimedNote& a, const TimedNote& b){
+            return a.us < b.us;
+        });
     }
     return tl;
 }
@@ -142,6 +158,10 @@ void MIDIPlayer::setSpeed(double speed) {
     m_speed.store(std::max(0.25, std::min(2.0, speed)));
 }
 
+void MIDIPlayer::setSustainKey(char key) {
+    m_sustainKey.store(key);
+}
+
 void MIDIPlayer::playFile(const std::string& path,
                           KeyCallback    onKey,
                           StatusCallback onStatus,
@@ -173,7 +193,7 @@ void MIDIPlayer::playFile(const std::string& path,
                 }
 
         int shift     = RobloxKeyMapper::autoTranspose(lo, hi);
-        auto timeline = buildTimeline(midi, shift);
+        auto timeline = buildTimeline(midi, shift, m_sustainKey.load());
 
         if (timeline.empty()) {
             onStatus("Error: No playable notes found.");

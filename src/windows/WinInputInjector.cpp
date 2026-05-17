@@ -12,6 +12,7 @@ static const std::unordered_map<char, WORD> BASE_SCAN = {
     {'u',0x16},{'i',0x17},{'o',0x18},{'p',0x19},
     {'1',0x02},{'2',0x03},{'3',0x04},{'4',0x05},{'5',0x06},
     {'6',0x07},{'7',0x08},{'8',0x09},{'9',0x0A},{'0',0x0B},
+    {' ',0x39},  // Space — sustain pedal
 };
 
 // Black keys — base scan code (same physical key as matching white key).

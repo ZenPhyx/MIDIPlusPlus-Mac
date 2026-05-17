@@ -12,6 +12,7 @@ static const std::unordered_map<char, CGKeyCode> BASE_KEY_MAP = {
     {'n', 45}, {'m', 46},
     {'1', 18}, {'2', 19}, {'3', 20}, {'4', 21}, {'5', 23},
     {'6', 22}, {'7', 26}, {'8', 28}, {'9', 25}, {'0', 29},
+    {' ', 49},  // Space — sustain pedal
 };
 
 // Each shifted piano key gets its own phantom keycode (200+, not on any real Mac
