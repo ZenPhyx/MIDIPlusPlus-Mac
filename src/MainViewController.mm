@@ -9,7 +9,7 @@
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 static const CGFloat W  = 460;
-static const CGFloat H  = 620;
+static const CGFloat H  = 654;   // +34 vs old 620 to fit sustain row
 static const CGFloat M  = 20;
 static const CGFloat CW = W - M * 2;
 
@@ -190,6 +190,7 @@ static NSView* makeLine(NSColor* c) {
     std::vector<unsigned char>  _midiMsg;
     BOOL                        _dark;
     NSInteger                   _selectedRow;
+    char                        _sustainKey;   // key sent for CC64 sustain pedal
 }
 @property NSMutableArray<NSDictionary*>* library;
 @property NSMutableArray<NSDictionary*>* filtered;
@@ -220,6 +221,7 @@ static NSView* makeLine(NSColor* c) {
 @property NSTextField*    orLabel;
 @property NSPopUpButton*  devicePicker;
 @property NSButton*       refreshBtn;
+@property NSPopUpButton*  sustainPicker;   // Space / Tab / None
 @property NSButton*       liveModeBtn;
 @property NSTextField*    statusLabel;
 @property NSTextField*    a11yLabel;
@@ -239,7 +241,7 @@ static NSView* makeLine(NSColor* c) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    _dark = NO; _selectedRow = -1;
+    _dark = NO; _selectedRow = -1; _sustainKey = ' ';
     _player = std::make_unique<MIDIPlayer>();
     [self loadLibrary];
     [self buildUI];
@@ -368,6 +370,8 @@ static NSView* makeLine(NSColor* c) {
     self.libTable.headerView = nil; self.libTable.rowHeight = 30;
     self.libTable.intercellSpacing = NSMakeSize(0,0);
     self.libTable.gridStyleMask = NSTableViewGridNone;
+    self.libTable.target = self;
+    self.libTable.doubleAction = @selector(tableDoubleClicked:);
     NSTableColumn* col = [[NSTableColumn alloc] initWithIdentifier:@"col"];
     col.width = CW; [self.libTable addTableColumn:col];
     self.libScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(M, libY, CW, 130)];
@@ -448,8 +452,21 @@ static NSView* makeLine(NSColor* c) {
     self.refreshBtn.bezelStyle = NSBezelStyleRounded;
     [v addSubview:self.refreshBtn];
 
+    // Sustain pedal row
+    CGFloat susY = devY - 8 - 26;
+    NSTextField* susLbl = makeLabel(@"Sustain Pedal:", 12.5, NSFontWeightRegular);
+    susLbl.frame = NSMakeRect(M, susY+4, 104, 18);
+    [v addSubview:susLbl];
+    self.sustainPicker = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(M+110, susY, CW-110, 26) pullsDown:NO];
+    [self.sustainPicker addItemWithTitle:@"Space (default)"];
+    [self.sustainPicker addItemWithTitle:@"Tab"];
+    [self.sustainPicker addItemWithTitle:@"None"];
+    self.sustainPicker.target = self;
+    self.sustainPicker.action = @selector(sustainChanged:);
+    [v addSubview:self.sustainPicker];
+
     // Live mode btn
-    CGFloat liveY = devY - 8 - 38;
+    CGFloat liveY = susY - 8 - 38;
     self.liveModeBtn = makeColorBtn(@"🎹  Live Mode", accentGold(), 8, self, @selector(liveMode:));
     self.liveModeBtn.contentTintColor = [NSColor colorWithRed:0.11 green:0.078 blue:0.063 alpha:1];
     self.liveModeBtn.frame = NSMakeRect(M, liveY, CW, 38);
@@ -572,6 +589,15 @@ static NSView* makeLine(NSColor* c) {
     [self.libTable reloadData];
 }
 
+- (void)tableDoubleClicked:(id)sender {
+    NSInteger row = self.libTable.clickedRow;
+    if (row < 0 || row >= (NSInteger)self.filtered.count) return;
+    _selectedRow = row;
+    [self.libTable selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+    [self.libTable reloadData];
+    [self startEntry:self.filtered[row]];
+}
+
 - (void)deleteRow:(NSInteger)row {
     if (row < 0 || row >= (NSInteger)self.filtered.count) return;
     [self.library removeObject:self.filtered[row]];
@@ -584,6 +610,12 @@ static NSView* makeLine(NSColor* c) {
 // ─── Actions ──────────────────────────────────────────────────────────────────
 
 - (void)searchChanged:(id)sender { [self filterWith:self.searchField.stringValue]; }
+
+- (void)sustainChanged:(id)sender {
+    NSInteger idx = [self.sustainPicker indexOfSelectedItem];
+    _sustainKey = (idx == 0) ? ' ' : (idx == 1) ? '\t' : '\0';
+    _player->setSustainKey(_sustainKey);
+}
 
 - (void)playPause:(id)sender {
     if (_player->isRunning()) {
@@ -670,6 +702,7 @@ static NSView* makeLine(NSColor* c) {
 - (void)liveMode:(id)sender {
     NSInteger idx = self.devicePicker.indexOfSelectedItem;
     if (idx < 0) { [self setStatus:@"No MIDI device selected."]; return; }
+    [self.pollTimer invalidate]; self.pollTimer = nil;
     try {
         _midiIn = std::make_unique<RtMidiIn>();
         _midiIn->openPort((unsigned int)idx);
@@ -685,13 +718,27 @@ static NSView* makeLine(NSColor* c) {
 
 - (void)pollMIDI:(NSTimer*)t {
     if (!_midiIn) return;
-    _midiIn->getMessage(&_midiMsg);
-    if (_midiMsg.size() < 3) return;
-    uint8_t type = _midiMsg[0] & 0xF0, note = _midiMsg[1], vel = _midiMsg[2];
-    auto key = RobloxKeyMapper::map((int)note);
-    if (!key) return;
-    if (type == 0x90 && vel > 0) pressKey(*key);
-    else if (type == 0x80 || (type == 0x90 && vel == 0)) releaseKey(*key);
+    // Drain all queued MIDI messages each tick
+    while (true) {
+        _midiIn->getMessage(&_midiMsg);
+        if (_midiMsg.empty()) break;
+        if (_midiMsg.size() < 2) continue;
+        uint8_t type = _midiMsg[0] & 0xF0;
+        if ((type == 0x90 || type == 0x80) && _midiMsg.size() >= 3) {
+            uint8_t note = _midiMsg[1], vel = _midiMsg[2];
+            auto key = RobloxKeyMapper::map((int)note);
+            if (key) {
+                if (type == 0x90 && vel > 0) livePress(*key);
+                else                          liveRelease(*key);
+            }
+        } else if (type == 0xB0 && _midiMsg.size() >= 3) {
+            // CC64 = sustain pedal
+            if (_midiMsg[1] == 64 && _sustainKey) {
+                if (_midiMsg[2] >= 64) livePress(_sustainKey);
+                else                   liveRelease(_sustainKey);
+            }
+        }
+    }
 }
 
 // ─── Devices ──────────────────────────────────────────────────────────────────

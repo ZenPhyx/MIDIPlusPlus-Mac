@@ -1,6 +1,15 @@
 #import "AppDelegate.h"
 #import "MainViewController.h"
 
+// Floating panel that lets the user click controls without stealing key focus
+// from Roblox.  becomesKeyOnlyIfNeeded = YES means text fields still work.
+@interface FloatingPanel : NSPanel
+@end
+@implementation FloatingPanel
+- (BOOL)canBecomeKeyWindow  { return YES; }
+- (BOOL)canBecomeMainWindow { return NO;  }
+@end
+
 @interface AppDelegate ()
 @property (strong) NSWindow* window;
 @end
@@ -8,26 +17,29 @@
 @implementation AppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification*)note {
-    [NSApp setAppearance:[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua]];
+    static const CGFloat W = 460, H = 654;
 
-    NSRect frame = NSMakeRect(0, 0, 460, 400);
-    NSWindowStyleMask style = NSWindowStyleMaskTitled
-                            | NSWindowStyleMaskClosable
-                            | NSWindowStyleMaskMiniaturizable;
+    FloatingPanel* panel = [[FloatingPanel alloc]
+        initWithContentRect:NSMakeRect(0, 0, W, H)
+                  styleMask:NSWindowStyleMaskTitled
+                           | NSWindowStyleMaskClosable
+                           | NSWindowStyleMaskMiniaturizable
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
 
-    self.window = [[NSWindow alloc] initWithContentRect:frame
-                                              styleMask:style
-                                                backing:NSBackingStoreBuffered
-                                                  defer:NO];
-    self.window.title = @"Roblox Piano";
-    self.window.titlebarAppearsTransparent = YES;
-    self.window.movableByWindowBackground  = YES;
+    panel.level                  = NSFloatingWindowLevel;
+    panel.becomesKeyOnlyIfNeeded = YES;   // buttons don't steal focus
+    panel.hidesOnDeactivate      = NO;    // stays visible when Roblox is active
+    panel.title                  = @"Roblox Piano";
+    panel.titlebarAppearsTransparent = YES;
+    panel.movableByWindowBackground  = YES;
 
     MainViewController* vc = [[MainViewController alloc] init];
-    self.window.contentViewController = vc;
+    panel.contentViewController = vc;
 
-    [self.window center];
-    [self.window makeKeyAndOrderFront:nil];
+    [panel center];
+    [panel makeKeyAndOrderFront:nil];
+    self.window = panel;
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
