@@ -93,10 +93,10 @@ static char keyBase(char k) {
     return k;
 }
 
-#ifdef _WIN32
-// On Windows, keys that share a scan code (e.g. 'c' and 'C') cannot be held
-// simultaneously. When two notes at the same timestamp conflict, stagger the
-// second one by 15 ms — inaudible to humans, but both notes play correctly.
+// Keys sharing the same physical key (e.g. 'c'/'C', 'q'/'Q') cannot be held
+// simultaneously — both Windows (scan codes) and Mac (transient shift) need this.
+// When two notes at the same timestamp conflict, stagger the second by 15 ms —
+// inaudible to humans but both notes play correctly.
 static void staggerConflicts(std::vector<TimedNote>& tl) {
     for (size_t i = 0; i + 1 < tl.size(); ++i) {
         if (tl[i].us == tl[i+1].us && keyBase(tl[i].key) == keyBase(tl[i+1].key))
@@ -106,7 +106,6 @@ static void staggerConflicts(std::vector<TimedNote>& tl) {
         return a.us < b.us;
     });
 }
-#endif
 
 static bool countdown(std::atomic<bool>& running, MIDIPlayer::StatusCallback cb) {
     for (int i = 3; i > 0; --i) {
@@ -204,9 +203,7 @@ void MIDIPlayer::playFile(const std::string& path,
         double dur = timeline.back().us / 1e6;
         m_duration.store(dur);
 
-#ifdef _WIN32
         staggerConflicts(timeline);
-#endif
 
         std::string info = std::to_string(timeline.size()) + " notes";
         if (shift) info += "  (transposed " + (shift > 0 ? std::string("+") : "") + std::to_string(shift) + ")";
